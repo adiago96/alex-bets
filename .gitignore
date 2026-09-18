@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 alex_bets.db
 .streamlit/secrets.toml
+telegram_config.py
+*.session
+*.session-journal
+listener.log
+app.log
+telegram_qr.png

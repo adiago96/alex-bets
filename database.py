@@ -35,6 +35,31 @@ CREATE TABLE IF NOT EXISTS patas (
 CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);
 CREATE INDEX IF NOT EXISTS idx_surebets_estado ON surebets(estado);
 CREATE INDEX IF NOT EXISTS idx_surebets_fecha ON surebets(fecha);
+
+CREATE TABLE IF NOT EXISTS oportunidades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recibido_en TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    roi_pct REAL NOT NULL,
+    torneo TEXT NOT NULL,
+    evento TEXT NOT NULL,
+    comienza_en TEXT NOT NULL,   -- texto original del canal, ej. "5h 37m" (solo informativo)
+    empieza_en TEXT,             -- fecha/hora absoluta calculada al recibir el mensaje, para filtrar
+    texto_original TEXT NOT NULL,
+    firma TEXT NOT NULL,         -- evento + casas/selecciones, para detectar duplicados
+    usada INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS oportunidad_patas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    oportunidad_id INTEGER NOT NULL REFERENCES oportunidades(id) ON DELETE CASCADE,
+    casa_apuestas TEXT NOT NULL,
+    seleccion TEXT NOT NULL,
+    cuota REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oportunidad_patas_oportunidad ON oportunidad_patas(oportunidad_id);
+CREATE INDEX IF NOT EXISTS idx_oportunidades_usada ON oportunidades(usada);
+CREATE INDEX IF NOT EXISTS idx_oportunidades_firma ON oportunidades(firma);
 """
 
 
@@ -105,6 +130,93 @@ def cerrar_surebet(surebet_id, beneficio_real):
 def eliminar_surebet(surebet_id):
     with get_conn() as conn:
         conn.execute("DELETE FROM surebets WHERE id = ?", (surebet_id,))
+
+
+def firma_oportunidad(evento, patas):
+    """Clave para detectar si dos mensajes describen la misma oportunidad:
+    mismo evento y mismas combinaciones casa/selección, sin importar el orden."""
+    combinaciones = sorted(f"{p['casa_apuestas']}::{p['seleccion']}" for p in patas)
+    return evento + "||" + "|".join(combinaciones)
+
+
+def guardar_oportunidad(roi_pct, torneo, evento, comienza_en, empieza_en, texto_original, patas):
+    """Guarda una oportunidad detectada en Telegram junto con sus patas. Si ya
+    existe una oportunidad no caducada con el mismo evento y las mismas
+    casas/selecciones, la actualiza (refresca ROI, cuotas y hora) en vez de
+    duplicarla. `patas` es una lista de dicts con claves: casa_apuestas,
+    seleccion, cuota."""
+    firma = firma_oportunidad(evento, patas)
+    with get_conn() as conn:
+        existente = conn.execute(
+            """SELECT id FROM oportunidades
+               WHERE firma = ? AND (empieza_en IS NULL OR empieza_en > datetime('now', 'localtime'))""",
+            (firma,),
+        ).fetchone()
+
+        if existente:
+            oportunidad_id = existente["id"]
+            conn.execute(
+                """UPDATE oportunidades
+                   SET roi_pct = ?, torneo = ?, comienza_en = ?, empieza_en = ?,
+                       texto_original = ?, recibido_en = datetime('now', 'localtime')
+                   WHERE id = ?""",
+                (roi_pct, torneo, comienza_en, empieza_en, texto_original, oportunidad_id),
+            )
+            conn.execute("DELETE FROM oportunidad_patas WHERE oportunidad_id = ?", (oportunidad_id,))
+        else:
+            cur = conn.execute(
+                """INSERT INTO oportunidades
+                   (roi_pct, torneo, evento, comienza_en, empieza_en, texto_original, firma)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (roi_pct, torneo, evento, comienza_en, empieza_en, texto_original, firma),
+            )
+            oportunidad_id = cur.lastrowid
+
+        conn.executemany(
+            """INSERT INTO oportunidad_patas (oportunidad_id, casa_apuestas, seleccion, cuota)
+               VALUES (?, ?, ?, ?)""",
+            [(oportunidad_id, p["casa_apuestas"], p["seleccion"], p["cuota"]) for p in patas],
+        )
+        return oportunidad_id
+
+
+def eliminar_oportunidades_caducadas():
+    """Borra las oportunidades cuyo evento ya ha empezado (según empieza_en)."""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM oportunidades WHERE empieza_en IS NOT NULL AND empieza_en <= datetime('now', 'localtime')"
+        )
+
+
+def listar_oportunidades(solo_no_usadas=True, limite=50):
+    """Lista oportunidades cuyo evento todavía no ha empezado (o sin hora
+    reconocida), más recientes primero por hora de inicio."""
+    with get_conn() as conn:
+        condiciones = ["(empieza_en IS NULL OR empieza_en > datetime('now', 'localtime'))"]
+        if solo_no_usadas:
+            condiciones.append("usada = 0")
+        query = (
+            "SELECT * FROM oportunidades WHERE " + " AND ".join(condiciones)
+            + " ORDER BY empieza_en IS NULL, empieza_en ASC LIMIT ?"
+        )
+        return conn.execute(query, (limite,)).fetchall()
+
+
+def listar_oportunidad_patas(oportunidad_id):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM oportunidad_patas WHERE oportunidad_id = ? ORDER BY id", (oportunidad_id,)
+        ).fetchall()
+
+
+def marcar_oportunidad_usada(oportunidad_id):
+    with get_conn() as conn:
+        conn.execute("UPDATE oportunidades SET usada = 1 WHERE id = ?", (oportunidad_id,))
+
+
+def eliminar_oportunidad(oportunidad_id):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM oportunidades WHERE id = ?", (oportunidad_id,))
 
 
 def obtener_todo_dataframe():

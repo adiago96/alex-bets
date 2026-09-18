@@ -7,7 +7,13 @@ import pandas as pd
 import streamlit as st
 
 import database as db
-from calculos import calcular_importe_total_para_beneficio, calcular_resultado_real, calcular_surebet
+from calculos import (
+    calcular_beneficios_por_seleccion,
+    calcular_importe_total_para_beneficio_agrupado,
+    calcular_reparto_desde_grupo_fijo,
+    calcular_resultado_real,
+    calcular_sugerencia_agrupada,
+)
 
 CASAS_HABITUALES = [
     "Bet365", "Bwin", "Betfair", "William Hill", "Codere",
@@ -30,15 +36,20 @@ MERCADOS_HABITUALES = [
 # Mercados donde la selección es "Más de X" / "Menos de X" con una línea numérica.
 MERCADOS_CON_LINEA = ["Over/Under goles", "Córners", "Tarjetas"]
 
+# Mercados de hándicap: la selección es un lado + el valor del hándicap (puede
+# ser distinto en cada casa, p.ej. -4.5 en una y +3.5 en otra para jugar una middle).
+MERCADOS_CON_HANDICAP = {
+    "Hándicap asiático": ["Local", "Visitante"],
+    "Hándicap europeo": ["Local", "Empate", "Visitante"],
+    "Hándicap de sets/juegos": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
+}
+
 # Selecciones habituales para el resto de mercados con opciones cerradas.
 SELECCIONES_POR_MERCADO = {
     "1X2": ["Local", "Empate", "Visitante"],
     "Doble oportunidad": ["Local o Empate", "Local o Visitante", "Empate o Visitante"],
     "Ambos marcan (BTTS)": ["Sí", "No"],
-    "Hándicap asiático": ["Local", "Visitante"],
-    "Hándicap europeo": ["Local", "Empate", "Visitante"],
     "Ganador del partido/set": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
-    "Hándicap de sets/juegos": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
 }
 
 
@@ -48,8 +59,6 @@ def _init_state():
             {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
             {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
         ]
-    if "resultado_calculo" not in st.session_state:
-        st.session_state.resultado_calculo = None
 
 
 def _formulario_nueva_surebet():
@@ -80,8 +89,80 @@ def _formulario_nueva_surebet():
         if st.button("➖ Quitar última pata") and len(st.session_state.patas_temp) > 2:
             st.session_state.patas_temp.pop()
 
+    num_patas = len(st.session_state.patas_temp)
+
+    st.markdown("---")
+    st.markdown("**Sugerencia de importes** (opcional, siempre puedes escribir el importe a mano en cada pata)")
+    modo = st.radio(
+        "¿Cómo quieres que se calcule la sugerencia?",
+        options=[
+            "Importe total a invertir",
+            "Beneficio garantizado deseado",
+            "Fijar el importe de una pata (p.ej. límite de una casa)",
+            "Sin sugerencia, importes manuales",
+        ],
+    )
+
+    # Cuotas, selecciones e importes "frescos": si el usuario acaba de tocar un
+    # campo, session_state ya tiene el valor nuevo aunque el widget de la pata
+    # todavía no se haya vuelto a dibujar en esta ejecución.
+    cuotas = [
+        st.session_state.get(f"cuota_{i}", p.get("cuota", 1.01))
+        for i, p in enumerate(st.session_state.patas_temp)
+    ]
+    selecciones = [p.get("seleccion", "") for p in st.session_state.patas_temp]
+    importes_actuales = [
+        st.session_state.get(f"importe_{i}", p.get("importe", 0.0)) or 0.0
+        for i, p in enumerate(st.session_state.patas_temp)
+    ]
+
+    idx_fijo = None
+    if modo == "Importe total a invertir":
+        importe_total_objetivo = st.number_input("Importe total a repartir (€)", min_value=1.0, value=100.0, step=1.0)
+    elif modo == "Beneficio garantizado deseado":
+        beneficio_objetivo = st.number_input("Beneficio garantizado deseado (€)", min_value=0.01, value=10.0, step=1.0)
+    elif modo == "Fijar el importe de una pata (p.ej. límite de una casa)":
+        opciones_pata = [
+            f"Pata #{i + 1}" + (f" - {p['casa_apuestas']}" if p["casa_apuestas"] else "")
+            for i, p in enumerate(st.session_state.patas_temp)
+        ]
+        pata_elegida = st.selectbox("¿Qué pata quieres fijar?", options=opciones_pata)
+        idx_fijo = opciones_pata.index(pata_elegida)
+        st.caption(
+            "Escribe el importe de esa pata (y, si la has repartido en más de una casa "
+            "por límite, en las demás patas con la misma selección) en la tabla de abajo."
+        )
+
+    suggested_importes = None
+    error_sugerencia = None
+    try:
+        if modo == "Importe total a invertir":
+            suggested_importes = calcular_sugerencia_agrupada(selecciones, cuotas, importe_total_objetivo)
+        elif modo == "Beneficio garantizado deseado":
+            importe_total_calc = calcular_importe_total_para_beneficio_agrupado(
+                selecciones, cuotas, beneficio_objetivo
+            )
+            suggested_importes = calcular_sugerencia_agrupada(selecciones, cuotas, importe_total_calc)
+        elif modo == "Fijar el importe de una pata (p.ej. límite de una casa)":
+            suggested_importes = calcular_reparto_desde_grupo_fijo(
+                selecciones, cuotas, importes_actuales, idx_fijo
+            )
+    except ValueError as e:
+        error_sugerencia = str(e)
+
+    if error_sugerencia:
+        st.warning(f"No se puede calcular la sugerencia: {error_sugerencia}")
+
+    if suggested_importes is not None and st.button("🪄 Aplicar sugerencia a todas las patas"):
+        for i, importe in enumerate(suggested_importes):
+            if importe is not None:
+                st.session_state[f"importe_{i}"] = round(importe, 2)
+        st.rerun()
+
+    st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
+
     for i, pata in enumerate(st.session_state.patas_temp):
-        c1, c2, c3 = st.columns([2, 2, 1])
+        c1, c2, c3, c4 = st.columns([2, 2, 1, 1.3])
         with c1:
             pata["casa_apuestas"] = st.selectbox(
                 f"Casa de apuestas #{i + 1}",
@@ -101,6 +182,15 @@ def _formulario_nueva_surebet():
                     f"Línea #{i + 1}", min_value=0.0, step=0.5, format="%.2f", key=f"seleccion_linea_{i}"
                 )
                 pata["seleccion"] = f"{tipo_linea} {linea:g}"
+            elif mercado in MERCADOS_CON_HANDICAP:
+                sub1, sub2 = st.columns([1, 1])
+                lado = sub1.selectbox(
+                    f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado], key=f"seleccion_lado_{i}"
+                )
+                linea = sub2.number_input(
+                    f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=f"seleccion_handicap_{i}"
+                )
+                pata["seleccion"] = f"{lado} {linea:+g}"
             elif mercado in SELECCIONES_POR_MERCADO:
                 opciones = SELECCIONES_POR_MERCADO[mercado] + ["Otra..."]
                 seleccionada = st.selectbox(
@@ -120,108 +210,95 @@ def _formulario_nueva_surebet():
             pata["cuota"] = st.number_input(
                 f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=f"cuota_{i}"
             )
-
-    st.markdown("---")
-    st.markdown("**Modo de cálculo del reparto**")
-    modo = st.radio(
-        "¿Cómo quieres calcular los importes?",
-        options=["Importe total a invertir", "Beneficio garantizado deseado"],
-        horizontal=True,
-    )
-
-    if modo == "Importe total a invertir":
-        importe_total = st.number_input("Importe total a repartir (€)", min_value=1.0, value=100.0, step=1.0)
-        beneficio_objetivo = None
-    else:
-        beneficio_objetivo = st.number_input("Beneficio garantizado deseado (€)", min_value=0.01, value=10.0, step=1.0)
-        importe_total = None
-
-    if st.button("🧮 Calcular reparto", type="primary"):
-        cuotas = [p["cuota"] for p in st.session_state.patas_temp]
-        try:
-            if modo == "Beneficio garantizado deseado":
-                importe_total = calcular_importe_total_para_beneficio(cuotas, beneficio_objetivo)
-            resultado = calcular_surebet(cuotas, importe_total)
-            st.session_state.resultado_calculo = {
-                "resultado": resultado,
-                "importe_total": importe_total,
-                "fecha": fecha,
-                "evento": evento,
-                "mercado": mercado,
-                "notas": notas,
-            }
-        except ValueError as e:
-            st.session_state.resultado_calculo = None
-            st.error(str(e))
-
-    resultado_info = st.session_state.resultado_calculo
-    if resultado_info:
-        resultado = resultado_info["resultado"]
-        confirmar_riesgo = True
-        if not resultado.es_arbitraje:
-            confirmar_riesgo = False
-            st.error(
-                f"🚫 ¡Cuidado! Estas cuotas NO forman una surebet real (probabilidad implícita total: "
-                f"{resultado.probabilidad_implicita_total * 100:.2f}% ≥ 100%). "
-                f"Con este reparto **perderías {abs(resultado.beneficio_garantizado):.2f} €** "
-                f"pase lo que pase, así que no hay beneficio garantizado."
+        with c4:
+            pata["importe"] = st.number_input(
+                f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=f"importe_{i}"
             )
-            confirmar_riesgo = st.checkbox(
-                "Entiendo el riesgo y quiero guardar esta apuesta de todas formas",
-                key="confirmar_riesgo",
-            )
-        else:
-            st.success(
-                f"✅ Surebet válida. Margen garantizado: **{resultado.margen_pct:.2f}%** · "
-                f"Beneficio garantizado: **{resultado.beneficio_garantizado:.2f} €**"
-            )
+            sugerido_i = suggested_importes[i] if suggested_importes is not None else None
+            if sugerido_i is None and suggested_importes is not None:
+                st.caption("🔒 Pata de referencia (fijada a mano)")
+            elif sugerido_i is not None and sugerido_i == 0.0 and selecciones.count(selecciones[i]) > 1:
+                st.caption("💡 Sugerido: 0.00 € (ya cubierto por otra pata con la misma selección)")
+            elif sugerido_i is not None:
+                st.caption(f"💡 Sugerido: {sugerido_i:.2f} €")
+
+    importes = [p["importe"] for p in st.session_state.patas_temp]
+    cuotas_finales = [p["cuota"] for p in st.session_state.patas_temp]
+    selecciones_finales = [p["seleccion"] for p in st.session_state.patas_temp]
+    importe_total = sum(importes)
+
+    confirmar_riesgo = True
+    if importe_total > 0:
+        beneficios = calcular_beneficios_por_seleccion(selecciones_finales, cuotas_finales, importes)
+        peor_beneficio = min(beneficios)
 
         tabla = pd.DataFrame(
             {
                 "Casa de apuestas": [p["casa_apuestas"] for p in st.session_state.patas_temp],
                 "Selección": [p["seleccion"] for p in st.session_state.patas_temp],
                 "Cuota": [p["cuota"] for p in st.session_state.patas_temp],
-                "Importe a apostar (€)": [round(x, 2) for x in resultado.importes],
+                "Importe a apostar (€)": [round(x, 2) for x in importes],
+                "Si gana esta pata, beneficio (€)": [round(b, 2) for b in beneficios],
             }
         )
         st.dataframe(tabla, use_container_width=True, hide_index=True)
-        st.caption(
-            f"Importe total: {resultado_info['importe_total']:.2f} € · "
-            f"Retorno garantizado: {resultado.retorno_garantizado:.2f} €"
-        )
+        st.caption(f"Importe total: {importe_total:.2f} €")
 
-        if st.button("💾 Guardar surebet", disabled=not confirmar_riesgo):
-            patas_guardar = [
-                {
-                    "casa_apuestas": p["casa_apuestas"],
-                    "seleccion": p["seleccion"],
-                    "cuota": p["cuota"],
-                    "importe": importe,
-                }
-                for p, importe in zip(st.session_state.patas_temp, resultado.importes)
+        if peor_beneficio > 0:
+            st.success(
+                f"✅ Surebet válida en el peor de los casos. Beneficio garantizado mínimo: "
+                f"**{peor_beneficio:.2f} €** ({peor_beneficio / importe_total * 100:.2f}%)"
+            )
+        else:
+            confirmar_riesgo = False
+            st.error(
+                f"🚫 ¡Cuidado! Con estos importes hay al menos un resultado en el que "
+                f"**perderías {abs(peor_beneficio):.2f} €**, no hay beneficio garantizado en todos los casos."
+            )
+            confirmar_riesgo = st.checkbox(
+                "Entiendo el riesgo y quiero guardar esta apuesta de todas formas",
+                key="confirmar_riesgo",
+            )
+    else:
+        beneficios = None
+        peor_beneficio = 0.0
+        st.info("Escribe el importe a apostar en cada pata para ver el resultado esperado.")
+
+    if st.button("💾 Guardar surebet", type="primary", disabled=not confirmar_riesgo or importe_total <= 0):
+        patas_guardar = [
+            {
+                "casa_apuestas": p["casa_apuestas"],
+                "seleccion": p["seleccion"],
+                "cuota": p["cuota"],
+                "importe": p["importe"],
+            }
+            for p in st.session_state.patas_temp
+        ]
+        if any(not p["casa_apuestas"] for p in patas_guardar):
+            st.error("Todas las patas necesitan una casa de apuestas.")
+        elif any(p["importe"] <= 0 for p in patas_guardar):
+            st.error("Todas las patas necesitan un importe a apostar mayor que 0.")
+        elif not evento or not mercado:
+            st.error("Evento y mercado son obligatorios.")
+        else:
+            db.crear_surebet(
+                fecha=fecha.isoformat(),
+                evento=evento,
+                mercado=mercado,
+                importe_total=importe_total,
+                beneficio_pct=(peor_beneficio / importe_total * 100) if importe_total else 0.0,
+                beneficio_importe=peor_beneficio,
+                notas=notas,
+                patas=patas_guardar,
+            )
+            for i in range(num_patas):
+                st.session_state.pop(f"importe_{i}", None)
+            st.session_state.patas_temp = [
+                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
+                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
             ]
-            if any(not p["casa_apuestas"] for p in patas_guardar):
-                st.error("Todas las patas necesitan una casa de apuestas.")
-            elif not resultado_info["evento"] or not resultado_info["mercado"]:
-                st.error("Evento y mercado son obligatorios.")
-            else:
-                db.crear_surebet(
-                    fecha=resultado_info["fecha"].isoformat(),
-                    evento=resultado_info["evento"],
-                    mercado=resultado_info["mercado"],
-                    importe_total=resultado_info["importe_total"],
-                    beneficio_pct=resultado.margen_pct,
-                    beneficio_importe=resultado.beneficio_garantizado,
-                    notas=resultado_info["notas"],
-                    patas=patas_guardar,
-                )
-                st.session_state.patas_temp = [
-                    {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
-                    {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
-                ]
-                st.session_state.resultado_calculo = None
-                st.success("Surebet guardada correctamente.")
-                st.rerun()
+            st.success("Surebet guardada correctamente.")
+            st.rerun()
 
 
 def _resolver_pendientes():
