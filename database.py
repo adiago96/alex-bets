@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS surebets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fecha TEXT NOT NULL,
     evento TEXT NOT NULL,
+    deporte TEXT NOT NULL DEFAULT '',
     mercado TEXT NOT NULL,
     importe_total REAL NOT NULL,
     beneficio_esperado_pct REAL NOT NULL,
@@ -78,18 +79,21 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        columnas = {fila["name"] for fila in conn.execute("PRAGMA table_info(surebets)")}
+        if "deporte" not in columnas:
+            conn.execute("ALTER TABLE surebets ADD COLUMN deporte TEXT NOT NULL DEFAULT ''")
 
 
-def crear_surebet(fecha, evento, mercado, importe_total, beneficio_pct, beneficio_importe, notas, patas):
+def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas, patas):
     """Crea una surebet junto con sus patas. `patas` es una lista de dicts
     con claves: casa_apuestas, seleccion, cuota, importe."""
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO surebets
-               (fecha, evento, mercado, importe_total, beneficio_esperado_pct,
+               (fecha, evento, deporte, mercado, importe_total, beneficio_esperado_pct,
                 beneficio_esperado_importe, notas)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (fecha, evento, mercado, importe_total, beneficio_pct, beneficio_importe, notas),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fecha, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas),
         )
         surebet_id = cur.lastrowid
         conn.executemany(

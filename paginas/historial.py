@@ -15,14 +15,16 @@ def _cargar_datos():
 
 
 def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     estados = col1.multiselect(
         "Estado", options=["pendiente", "resuelta"], default=["resuelta"], key="hist_estado"
     )
+    deportes = sorted(surebets["deporte"].unique()) if not surebets.empty else []
+    deportes_sel = col2.multiselect("Deporte", options=deportes, default=deportes, key="hist_deporte")
     mercados = sorted(surebets["mercado"].unique()) if not surebets.empty else []
-    mercados_sel = col2.multiselect("Mercado", options=mercados, default=mercados, key="hist_mercado")
+    mercados_sel = col3.multiselect("Mercado", options=mercados, default=mercados, key="hist_mercado")
     casas = sorted(patas["casa_apuestas"].unique()) if not patas.empty else []
-    casas_sel = col3.multiselect("Casa de apuestas", options=casas, default=casas, key="hist_casa")
+    casas_sel = col4.multiselect("Casa de apuestas", options=casas, default=casas, key="hist_casa")
 
     if not surebets.empty:
         fecha_min = surebets["fecha"].min().date()
@@ -40,6 +42,7 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
     df = surebets.copy()
     if not df.empty:
         df = df[df["estado"].isin(estados)]
+        df = df[df["deporte"].isin(deportes_sel)]
         df = df[df["mercado"].isin(mercados_sel)]
         if rango_fechas and len(rango_fechas) == 2:
             inicio, fin = rango_fechas
@@ -58,6 +61,7 @@ def _tabla_resumen(df: pd.DataFrame):
         {
             "Fecha": df["fecha"].dt.strftime("%Y-%m-%d"),
             "Evento": df["evento"],
+            "Deporte": df["deporte"],
             "Mercado": df["mercado"],
             "Estado": df["estado"],
             "Importe total (€)": df["importe_total"].round(2),
@@ -82,7 +86,7 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
 
         with st.expander(
             f"{estado_icono} {surebet['fecha'].strftime('%Y-%m-%d')} · {surebet['evento']} · "
-            f"{surebet['mercado']} · {beneficio_txt}"
+            f"{surebet['deporte']} · {surebet['mercado']} · {beneficio_txt}"
         ):
             tabla_patas = patas_surebet[["casa_apuestas", "seleccion", "cuota", "importe", "resultado"]].rename(
                 columns={

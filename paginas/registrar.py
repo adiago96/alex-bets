@@ -20,6 +20,21 @@ CASAS_HABITUALES = [
     "Marathonbet", "Pinnacle", "Betsson", "Winamax", "Luckia", "LeoVegas",
 ]
 
+DEPORTES_HABITUALES = [
+    "Fútbol",
+    "Baloncesto",
+    "Tenis",
+    "Voleibol",
+    "Balonmano",
+    "Tenis de mesa",
+    "Béisbol",
+    "Hockey hielo",
+    "Rugby",
+    "Boxeo/MMA",
+    "Fórmula 1/Motor",
+    "Esports",
+]
+
 MERCADOS_HABITUALES = [
     "1X2",
     "Doble oportunidad",
@@ -67,6 +82,14 @@ def _formulario_nueva_surebet():
     col_a, col_b = st.columns(2)
     with col_a:
         fecha = st.date_input("Fecha", value=date.today())
+        deporte = st.selectbox(
+            "Deporte",
+            options=[""] + DEPORTES_HABITUALES + ["Otro..."],
+            index=0,
+            key="deporte_select",
+        )
+        if deporte == "Otro...":
+            deporte = st.text_input("Nombre del deporte", key="deporte_otro")
         evento = st.text_input("Evento", placeholder="Ej. Real Madrid vs Barcelona")
     with col_b:
         mercado = st.selectbox(
@@ -278,12 +301,13 @@ def _formulario_nueva_surebet():
             st.error("Todas las patas necesitan una casa de apuestas.")
         elif any(p["importe"] <= 0 for p in patas_guardar):
             st.error("Todas las patas necesitan un importe a apostar mayor que 0.")
-        elif not evento or not mercado:
-            st.error("Evento y mercado son obligatorios.")
+        elif not evento or not mercado or not deporte:
+            st.error("Deporte, evento y mercado son obligatorios.")
         else:
             db.crear_surebet(
                 fecha=fecha.isoformat(),
                 evento=evento,
+                deporte=deporte,
                 mercado=mercado,
                 importe_total=importe_total,
                 beneficio_pct=(peor_beneficio / importe_total * 100) if importe_total else 0.0,
@@ -313,7 +337,9 @@ def _resolver_pendientes():
         patas = db.listar_patas(surebet["id"])
         with st.expander(
             f"{surebet['fecha']} · {surebet['evento']} · {surebet['mercado']} "
-            f"(objetivo: {surebet['beneficio_esperado_importe']:.2f} €)"
+            f"(objetivo: {surebet['beneficio_esperado_importe']:.2f} €)",
+            key=f"expander_pendiente_{surebet['id']}",
+            on_change="rerun",
         ):
             resultados_seleccionados = {}
             for pata in patas:
