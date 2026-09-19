@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS patas (
     seleccion TEXT NOT NULL,
     cuota REAL NOT NULL,
     importe REAL NOT NULL,
-    resultado TEXT NOT NULL DEFAULT 'pendiente'  -- pendiente | ganada | perdida
+    resultado TEXT NOT NULL DEFAULT 'pendiente'  -- pendiente | ganada | perdida | anulada
 );
 
 CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);

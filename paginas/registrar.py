@@ -349,8 +349,8 @@ def _resolver_pendientes():
                 col3.write(f"Cuota {pata['cuota']:.2f} · {pata['importe']:.2f} €")
                 resultados_seleccionados[pata["id"]] = col4.selectbox(
                     "Resultado",
-                    options=["pendiente", "ganada", "perdida"],
-                    index=["pendiente", "ganada", "perdida"].index(pata["resultado"]),
+                    options=["pendiente", "ganada", "perdida", "anulada"],
+                    index=["pendiente", "ganada", "perdida", "anulada"].index(pata["resultado"]),
                     key=f"resultado_pata_{pata['id']}",
                     label_visibility="collapsed",
                 )

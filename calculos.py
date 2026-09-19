@@ -158,10 +158,13 @@ def calcular_resultado_real(patas_importes_cuotas_resultado: list[tuple[float, f
     """Calcula el beneficio real una vez resueltas todas las patas.
 
     patas_importes_cuotas_resultado: lista de tuplas (importe, cuota, resultado)
-    donde resultado es 'ganada' o 'perdida'.
+    donde resultado es 'ganada', 'perdida' o 'anulada'. Una pata anulada
+    devuelve el importe apostado (no se gana ni se pierde esa parte del stake).
     """
     retorno = 0.0
     for importe, cuota, resultado in patas_importes_cuotas_resultado:
         if resultado == "ganada":
             retorno += importe * cuota
+        elif resultado == "anulada":
+            retorno += importe
     return retorno - importe_total
