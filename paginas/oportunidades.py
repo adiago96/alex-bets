@@ -1,6 +1,7 @@
 # paginas/oportunidades.py
 """Pestaña de oportunidades detectadas automáticamente en el canal de Telegram."""
 
+import html
 from datetime import datetime
 
 import streamlit as st
@@ -9,6 +10,29 @@ import database as db
 from calculos import calcular_beneficios_por_seleccion, calcular_sugerencia_agrupada
 
 IMPORTE_POR_DEFECTO = 100.0
+
+# URL de cada casa de apuestas (siempre la misma, no depende del evento).
+CASA_URLS = {
+    "bet365": "https://www.bet365.es",
+    "bwin": "https://www.bwin.es",
+    "betfair": "https://www.betfair.es",
+    "william hill": "https://www.williamhill.es",
+    "codere": "https://www.codere.es",
+    "marathonbet": "https://www.marathonbet.es",
+    "pinnacle": "https://www.pinnacle.com",
+    "betsson": "https://www.betsson.es",
+    "winamax": "https://www.winamax.es",
+    "luckia": "https://www.luckia.es",
+    "leovegas": "https://www.leovegas.es",
+}
+
+
+def _enlace_casa(casa_apuestas):
+    texto = html.escape(casa_apuestas)
+    url = CASA_URLS.get(casa_apuestas.strip().lower())
+    if not url:
+        return texto
+    return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{texto}</a>'
 
 
 def _tiempo_restante(oportunidad):
@@ -64,7 +88,7 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
 
         for pata, sugerido in zip(patas, importes_sugeridos):
             col1, col2, col3, col4 = st.columns([2, 3, 1, 1.5])
-            col1.write(pata["casa_apuestas"])
+            col1.markdown(_enlace_casa(pata["casa_apuestas"]), unsafe_allow_html=True)
             col2.write(pata["seleccion"])
             col3.write(f"Cuota {pata['cuota']:.2f}")
             col4.write(f"💡 {sugerido:.2f} €" if sugerido is not None else "—")
