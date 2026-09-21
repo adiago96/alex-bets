@@ -8,4 +8,5 @@ telegram_config.py
 *.session-journal
 listener.log
 app.log
+streamlit.log
 telegram_qr.png

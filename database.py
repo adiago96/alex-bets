@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS patas (
     seleccion TEXT NOT NULL,
     cuota REAL NOT NULL,
     importe REAL NOT NULL,
-    resultado TEXT NOT NULL DEFAULT 'pendiente'  -- pendiente | ganada | perdida | anulada
+    resultado TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | ganada | perdida | anulada | cerrada
+    importe_cierre REAL  -- solo relevante si resultado = 'cerrada': importe recibido al cerrar/cashout
 );
 
 CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);
@@ -82,6 +83,9 @@ def init_db():
         columnas = {fila["name"] for fila in conn.execute("PRAGMA table_info(surebets)")}
         if "deporte" not in columnas:
             conn.execute("ALTER TABLE surebets ADD COLUMN deporte TEXT NOT NULL DEFAULT ''")
+        columnas_patas = {fila["name"] for fila in conn.execute("PRAGMA table_info(patas)")}
+        if "importe_cierre" not in columnas_patas:
+            conn.execute("ALTER TABLE patas ADD COLUMN importe_cierre REAL")
 
 
 def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas, patas):
@@ -118,9 +122,12 @@ def listar_patas(surebet_id):
         ).fetchall()
 
 
-def actualizar_resultado_pata(pata_id, resultado):
+def actualizar_resultado_pata(pata_id, resultado, importe_cierre=None):
     with get_conn() as conn:
-        conn.execute("UPDATE patas SET resultado = ? WHERE id = ?", (resultado, pata_id))
+        conn.execute(
+            "UPDATE patas SET resultado = ?, importe_cierre = ? WHERE id = ?",
+            (resultado, importe_cierre, pata_id),
+        )
 
 
 def cerrar_surebet(surebet_id, beneficio_real):

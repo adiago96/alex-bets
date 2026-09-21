@@ -90,14 +90,21 @@ def _grafico_evolucion(df: pd.DataFrame):
 
 def _grafico_por_casa(patas: pd.DataFrame, surebets: pd.DataFrame):
     resueltas_ids = set(surebets[surebets["estado"] == "resuelta"]["id"])
-    df = patas[patas["surebet_id"].isin(resueltas_ids) & patas["resultado"].isin(["ganada", "perdida"])].copy()
+    df = patas[
+        patas["surebet_id"].isin(resueltas_ids) & patas["resultado"].isin(["ganada", "perdida", "cerrada"])
+    ].copy()
     if df.empty:
         st.info("Todavía no hay patas resueltas para analizar por casa de apuestas.")
         return
 
-    df["neto"] = df.apply(
-        lambda r: r["importe"] * (r["cuota"] - 1) if r["resultado"] == "ganada" else -r["importe"], axis=1
-    )
+    def _neto(r):
+        if r["resultado"] == "ganada":
+            return r["importe"] * (r["cuota"] - 1)
+        if r["resultado"] == "cerrada":
+            return (r["importe_cierre"] or 0.0) - r["importe"]
+        return -r["importe"]
+
+    df["neto"] = df.apply(_neto, axis=1)
     resumen = df.groupby("casa_apuestas").agg(
         beneficio_neto=("neto", "sum"),
         importe_movido=("importe", "sum"),

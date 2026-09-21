@@ -154,17 +154,23 @@ def calcular_beneficios_por_seleccion(
     return [retorno_por_clave[clave] - importe_total for clave in claves]
 
 
-def calcular_resultado_real(patas_importes_cuotas_resultado: list[tuple[float, float, str]], importe_total: float) -> float:
+def calcular_resultado_real(
+    patas_importes_cuotas_resultado: list[tuple[float, float, str, float | None]], importe_total: float
+) -> float:
     """Calcula el beneficio real una vez resueltas todas las patas.
 
-    patas_importes_cuotas_resultado: lista de tuplas (importe, cuota, resultado)
-    donde resultado es 'ganada', 'perdida' o 'anulada'. Una pata anulada
-    devuelve el importe apostado (no se gana ni se pierde esa parte del stake).
+    patas_importes_cuotas_resultado: lista de tuplas (importe, cuota, resultado, importe_cierre)
+    donde resultado es 'ganada', 'perdida', 'anulada' o 'cerrada'. Una pata
+    anulada devuelve el importe apostado (no se gana ni se pierde esa parte
+    del stake). Una pata cerrada (cashout) devuelve exactamente el
+    importe_cierre indicado, en vez de importe * cuota.
     """
     retorno = 0.0
-    for importe, cuota, resultado in patas_importes_cuotas_resultado:
+    for importe, cuota, resultado, importe_cierre in patas_importes_cuotas_resultado:
         if resultado == "ganada":
             retorno += importe * cuota
         elif resultado == "anulada":
             retorno += importe
+        elif resultado == "cerrada":
+            retorno += importe_cierre or 0.0
     return retorno - importe_total

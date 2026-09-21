@@ -88,13 +88,16 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
             f"{estado_icono} {surebet['fecha'].strftime('%Y-%m-%d')} · {surebet['evento']} · "
             f"{surebet['deporte']} · {surebet['mercado']} · {beneficio_txt}"
         ):
-            tabla_patas = patas_surebet[["casa_apuestas", "seleccion", "cuota", "importe", "resultado"]].rename(
+            tabla_patas = patas_surebet[
+                ["casa_apuestas", "seleccion", "cuota", "importe", "resultado", "importe_cierre"]
+            ].rename(
                 columns={
                     "casa_apuestas": "Casa de apuestas",
                     "seleccion": "Selección",
                     "cuota": "Cuota",
                     "importe": "Importe (€)",
                     "resultado": "Resultado",
+                    "importe_cierre": "Importe de cierre (€)",
                 }
             )
             st.dataframe(tabla_patas, use_container_width=True, hide_index=True)

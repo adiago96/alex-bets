@@ -342,18 +342,33 @@ def _resolver_pendientes():
             on_change="rerun",
         ):
             resultados_seleccionados = {}
+            importes_cierre_seleccionados = {}
+            opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
             for pata in patas:
-                col1, col2, col3, col4 = st.columns([2, 2, 1, 1.5])
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 1.3, 1.2, 1.3])
                 col1.write(pata["casa_apuestas"])
                 col2.write(pata["seleccion"])
                 col3.write(f"Cuota {pata['cuota']:.2f} · {pata['importe']:.2f} €")
-                resultados_seleccionados[pata["id"]] = col4.selectbox(
+                resultado_sel = col4.selectbox(
                     "Resultado",
-                    options=["pendiente", "ganada", "perdida", "anulada"],
-                    index=["pendiente", "ganada", "perdida", "anulada"].index(pata["resultado"]),
+                    options=opciones_resultado,
+                    index=opciones_resultado.index(pata["resultado"]),
                     key=f"resultado_pata_{pata['id']}",
                     label_visibility="collapsed",
                 )
+                resultados_seleccionados[pata["id"]] = resultado_sel
+                if resultado_sel == "cerrada":
+                    importes_cierre_seleccionados[pata["id"]] = col5.number_input(
+                        "Importe de cierre (€)",
+                        min_value=0.0,
+                        step=1.0,
+                        format="%.2f",
+                        value=float(pata["importe_cierre"] or 0.0),
+                        key=f"importe_cierre_pata_{pata['id']}",
+                        label_visibility="collapsed",
+                    )
+                else:
+                    importes_cierre_seleccionados[pata["id"]] = None
 
             col_a, col_b = st.columns([1, 3])
             with col_a:
@@ -362,9 +377,17 @@ def _resolver_pendientes():
                         st.error("Marca el resultado de todas las patas antes de cerrar la surebet.")
                     else:
                         for pata_id, resultado in resultados_seleccionados.items():
-                            db.actualizar_resultado_pata(pata_id, resultado)
+                            db.actualizar_resultado_pata(
+                                pata_id, resultado, importes_cierre_seleccionados[pata_id]
+                            )
                         datos = [
-                            (p["importe"], p["cuota"], resultados_seleccionados[p["id"]]) for p in patas
+                            (
+                                p["importe"],
+                                p["cuota"],
+                                resultados_seleccionados[p["id"]],
+                                importes_cierre_seleccionados[p["id"]],
+                            )
+                            for p in patas
                         ]
                         beneficio_real = calcular_resultado_real(datos, surebet["importe_total"])
                         db.cerrar_surebet(surebet["id"], beneficio_real)
