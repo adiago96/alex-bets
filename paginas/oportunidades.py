@@ -49,6 +49,15 @@ def _tiempo_restante(oportunidad):
     return f"{horas}h {minutos}m"
 
 
+def _fecha_hora_evento(oportunidad):
+    """Fecha y hora exactas del evento (hora de inicio del mensaje de Telegram
+    más la duración indicada en 'Comienza en: ...'), o None si no se pudo
+    calcular."""
+    if not oportunidad["empieza_en"]:
+        return None
+    return datetime.fromisoformat(oportunidad["empieza_en"])
+
+
 def _calcular_reparto_y_beneficio(selecciones, cuotas, importe_total):
     """Importe sugerido por pata y beneficio garantizado (el peor de los
     casos) para un importe total dado. Devuelve (importes, beneficio); ambos
@@ -70,9 +79,12 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
     _, beneficio_cabecera = _calcular_reparto_y_beneficio(selecciones, cuotas, importe_actual)
     beneficio_txt = f"{beneficio_cabecera:.2f} €" if beneficio_cabecera is not None else "?"
 
+    fecha_hora = _fecha_hora_evento(oportunidad)
+    fecha_hora_txt = fecha_hora.strftime("%d/%m %H:%M") if fecha_hora else "?"
+
     with st.expander(
         f"💰 {beneficio_txt} · 📈 ROI {oportunidad['roi_pct']:.2f}% · {oportunidad['evento']} · "
-        f"{oportunidad['torneo']} · empieza en {_tiempo_restante(oportunidad)}"
+        f"{oportunidad['torneo']} · 📅 {fecha_hora_txt} (en {_tiempo_restante(oportunidad)})"
     ):
         importe_total = st.number_input(
             "Importe total a repartir (€)",
@@ -152,15 +164,30 @@ def render():
 
     con_patas = [(op, db.listar_oportunidad_patas(op["id"])) for op in oportunidades]
 
-    def _beneficio_para_orden(item):
-        oportunidad, patas = item
-        importe_actual = st.session_state.get(f"importe_oportunidad_{oportunidad['id']}", importe_base)
-        _, beneficio = _calcular_reparto_y_beneficio(
-            [p["seleccion"] for p in patas], [p["cuota"] for p in patas], importe_actual
-        )
-        return beneficio if beneficio is not None else float("-inf")
+    orden = st.radio(
+        "Ordenar por",
+        options=["Fecha y hora del evento", "Beneficio"],
+        horizontal=True,
+        key="orden_oportunidades",
+    )
 
-    con_patas.sort(key=_beneficio_para_orden, reverse=True)
+    if orden == "Fecha y hora del evento":
+        def _clave_orden(item):
+            oportunidad, _ = item
+            fecha_hora = _fecha_hora_evento(oportunidad)
+            return fecha_hora if fecha_hora else datetime.max
+
+        con_patas.sort(key=_clave_orden)
+    else:
+        def _clave_orden(item):
+            oportunidad, patas = item
+            importe_actual = st.session_state.get(f"importe_oportunidad_{oportunidad['id']}", importe_base)
+            _, beneficio = _calcular_reparto_y_beneficio(
+                [p["seleccion"] for p in patas], [p["cuota"] for p in patas], importe_actual
+            )
+            return beneficio if beneficio is not None else float("-inf")
+
+        con_patas.sort(key=_clave_orden, reverse=True)
 
     for oportunidad, patas in con_patas:
         _mostrar_oportunidad(oportunidad, patas, importe_base)
