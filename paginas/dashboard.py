@@ -10,6 +10,11 @@ import database as db
 COLOR_GANANCIA = "#2ecc71"
 COLOR_PERDIDA = "#e74c3c"
 
+MESES_ES = {
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+    7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+}
+
 
 def _cargar_datos():
     surebets, patas = db.obtener_todo_dataframe()
@@ -36,8 +41,15 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
         rango_fechas = st.sidebar.date_input(
             "Rango de fechas", value=(fecha_min, fecha_max), min_value=fecha_min, max_value=fecha_max
         )
+        anios_presentes = sorted(surebets["fecha"].dt.year.unique(), reverse=True)
+        anios_sel = st.sidebar.multiselect("Año", options=anios_presentes, default=anios_presentes)
+        meses_presentes = sorted(surebets["fecha"].dt.month.unique())
+        meses_sel = st.sidebar.multiselect(
+            "Mes", options=meses_presentes, default=meses_presentes, format_func=lambda m: MESES_ES[m]
+        )
     else:
         rango_fechas = None
+        anios_sel, meses_sel = [], []
 
     df = surebets.copy()
     if not df.empty:
@@ -46,6 +58,8 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
         if rango_fechas and len(rango_fechas) == 2:
             inicio, fin = rango_fechas
             df = df[(df["fecha"].dt.date >= inicio) & (df["fecha"].dt.date <= fin)]
+        df = df[df["fecha"].dt.year.isin(anios_sel)]
+        df = df[df["fecha"].dt.month.isin(meses_sel)]
 
     ids_por_casa = set(patas[patas["casa_apuestas"].isin(casas_sel)]["surebet_id"]) if not patas.empty else set()
     if casas_sel:
@@ -86,6 +100,45 @@ def _grafico_evolucion(df: pd.DataFrame):
     )
     fig.update_traces(line_color=COLOR_GANANCIA)
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _resumen_mensual(df: pd.DataFrame):
+    resueltas = df[df["estado"] == "resuelta"].copy()
+    if resueltas.empty:
+        st.info("Todavía no hay surebets resueltas en el periodo filtrado para el resumen mensual.")
+        return
+
+    resueltas["periodo"] = resueltas["fecha"].dt.to_period("M")
+    resumen = resueltas.groupby("periodo").agg(
+        apostado=("importe_total", "sum"),
+        beneficio=("beneficio_real", "sum"),
+        num_surebets=("id", "count"),
+    ).reset_index().sort_values("periodo")
+    resumen["roi_pct"] = (resumen["beneficio"] / resumen["apostado"] * 100).round(2)
+    resumen["etiqueta"] = resumen["periodo"].apply(lambda p: f"{MESES_ES[p.month]} {p.year}")
+
+    fig = px.bar(
+        resumen, x="etiqueta", y="beneficio", title="Beneficio por mes",
+        labels={"etiqueta": "Mes", "beneficio": "Beneficio (€)"},
+        color="beneficio", color_continuous_scale=[COLOR_PERDIDA, COLOR_GANANCIA],
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    tabla = resumen.sort_values("periodo", ascending=False)[
+        ["etiqueta", "apostado", "beneficio", "roi_pct", "num_surebets"]
+    ].rename(
+        columns={
+            "etiqueta": "Mes",
+            "apostado": "Apostado (€)",
+            "beneficio": "Beneficio (€)",
+            "roi_pct": "ROI (%)",
+            "num_surebets": "Nº surebets",
+        }
+    )
+    st.dataframe(
+        tabla.style.format({"Apostado (€)": "{:.2f}", "Beneficio (€)": "{:.2f}", "ROI (%)": "{:.2f}"}),
+        use_container_width=True, hide_index=True,
+    )
 
 
 def _grafico_por_casa(patas: pd.DataFrame, surebets: pd.DataFrame):
@@ -159,6 +212,9 @@ def render():
         return
 
     _kpis(df)
+    st.markdown("---")
+    st.subheader("Resumen por mes")
+    _resumen_mensual(df)
     st.markdown("---")
     _grafico_evolucion(df)
     st.markdown("---")
