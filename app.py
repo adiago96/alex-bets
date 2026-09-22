@@ -8,6 +8,30 @@ from paginas import calculadora, dashboard, historial, oportunidades, registrar
 
 st.set_page_config(page_title="Alex Bets", page_icon="💶", layout="wide")
 
+
+def _acceso_autorizado() -> bool:
+    """Pantalla de contraseña antes de mostrar nada de la app. Si no hay
+    APP_PASSWORD configurada en secrets (uso solo en local), no bloquea."""
+    password_correcta = st.secrets.get("APP_PASSWORD")
+    if not password_correcta:
+        return True
+    if st.session_state.get("autorizado"):
+        return True
+
+    st.title("💶 Alex Bets")
+    intento = st.text_input("Contraseña", type="password", key="password_acceso")
+    if st.button("Entrar"):
+        if intento == password_correcta:
+            st.session_state.autorizado = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta.")
+    return False
+
+
+if not _acceso_autorizado():
+    st.stop()
+
 db.init_db()
 
 st.title("💶 Alex Bets — Gestor de Surebets")

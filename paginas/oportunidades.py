@@ -7,6 +7,7 @@ from datetime import datetime
 import streamlit as st
 
 import database as db
+import telegram_sync
 from calculos import calcular_beneficios_por_seleccion, calcular_sugerencia_agrupada
 
 IMPORTE_POR_DEFECTO = 100.0
@@ -127,13 +128,25 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
                 st.rerun()
 
 
+def _sincronizar_con_telegram(forzar=False):
+    try:
+        guardadas = telegram_sync.sincronizar(forzar=forzar)
+    except Exception as e:
+        st.warning(f"No se pudo sincronizar con Telegram: {e}")
+        return
+    if guardadas:
+        st.toast(f"🔭 {guardadas} oportunidad(es) nueva(s) o actualizada(s) desde Telegram.")
+
+
 def render():
     st.subheader("Oportunidades detectadas en Telegram")
     st.caption(
-        "Esta lista se rellena sola cuando el listener de Telegram detecta un mensaje "
-        "nuevo en el canal. Ejecuta `python telegram_listener.py` en una terminal aparte "
-        "para que se mantenga actualizada."
+        "Se sincroniza sola con el canal de Telegram cada vez que abres esta pestaña "
+        "(con un margen de un minuto para no conectar de más). Pulsa 'Actualizar ahora' "
+        "para forzarlo al momento."
     )
+
+    _sincronizar_con_telegram()
 
     importe_base = st.number_input(
         "Importe habitual a invertir por oportunidad (€)",
@@ -153,7 +166,9 @@ def render():
                 del st.session_state[key]
         st.session_state["_importe_base_anterior"] = importe_base
 
-    if st.button("🔄 Actualizar"):
+    if st.button("🔄 Actualizar ahora"):
+        with st.spinner("Consultando el canal de Telegram..."):
+            _sincronizar_con_telegram(forzar=True)
         st.rerun()
 
     db.eliminar_oportunidades_caducadas()
