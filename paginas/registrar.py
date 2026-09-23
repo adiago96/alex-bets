@@ -185,65 +185,67 @@ def _formulario_nueva_surebet():
     st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
 
     for i, pata in enumerate(st.session_state.patas_temp):
-        c1, c2, c3, c4 = st.columns([2, 2, 1, 1.3])
-        with c1:
-            pata["casa_apuestas"] = st.selectbox(
-                f"Casa de apuestas #{i + 1}",
-                options=[""] + CASAS_HABITUALES + ["Otra..."],
-                index=0,
-                key=f"casa_{i}",
-            )
-            if pata["casa_apuestas"] == "Otra...":
-                pata["casa_apuestas"] = st.text_input("Nombre de la casa", key=f"casa_otra_{i}")
-        with c2:
-            if mercado in MERCADOS_CON_LINEA:
-                sub1, sub2 = st.columns([1, 1])
-                tipo_linea = sub1.selectbox(
-                    f"Tipo #{i + 1}", options=["Más de", "Menos de"], key=f"seleccion_tipo_{i}"
+        with st.container(border=True):
+            st.caption(f"Pata #{i + 1}")
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 1.3])
+            with c1:
+                pata["casa_apuestas"] = st.selectbox(
+                    f"Casa de apuestas #{i + 1}",
+                    options=[""] + CASAS_HABITUALES + ["Otra..."],
+                    index=0,
+                    key=f"casa_{i}",
                 )
-                linea = sub2.number_input(
-                    f"Línea #{i + 1}", min_value=0.0, step=0.5, format="%.2f", key=f"seleccion_linea_{i}"
-                )
-                pata["seleccion"] = f"{tipo_linea} {linea:g}"
-            elif mercado in MERCADOS_CON_HANDICAP:
-                sub1, sub2 = st.columns([1, 1])
-                lado = sub1.selectbox(
-                    f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado], key=f"seleccion_lado_{i}"
-                )
-                linea = sub2.number_input(
-                    f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=f"seleccion_handicap_{i}"
-                )
-                pata["seleccion"] = f"{lado} {linea:+g}"
-            elif mercado in SELECCIONES_POR_MERCADO:
-                opciones = SELECCIONES_POR_MERCADO[mercado] + ["Otra..."]
-                seleccionada = st.selectbox(
-                    f"Selección #{i + 1}", options=opciones, key=f"seleccion_select_{i}"
-                )
-                if seleccionada == "Otra...":
-                    pata["seleccion"] = st.text_input(
-                        f"Selección #{i + 1} (personalizada)", key=f"seleccion_otra_{i}"
+                if pata["casa_apuestas"] == "Otra...":
+                    pata["casa_apuestas"] = st.text_input("Nombre de la casa", key=f"casa_otra_{i}")
+            with c2:
+                if mercado in MERCADOS_CON_LINEA:
+                    sub1, sub2 = st.columns([1, 1])
+                    tipo_linea = sub1.selectbox(
+                        f"Tipo #{i + 1}", options=["Más de", "Menos de"], key=f"seleccion_tipo_{i}"
                     )
+                    linea = sub2.number_input(
+                        f"Línea #{i + 1}", min_value=0.0, step=0.5, format="%.2f", key=f"seleccion_linea_{i}"
+                    )
+                    pata["seleccion"] = f"{tipo_linea} {linea:g}"
+                elif mercado in MERCADOS_CON_HANDICAP:
+                    sub1, sub2 = st.columns([1, 1])
+                    lado = sub1.selectbox(
+                        f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado], key=f"seleccion_lado_{i}"
+                    )
+                    linea = sub2.number_input(
+                        f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=f"seleccion_handicap_{i}"
+                    )
+                    pata["seleccion"] = f"{lado} {linea:+g}"
+                elif mercado in SELECCIONES_POR_MERCADO:
+                    opciones = SELECCIONES_POR_MERCADO[mercado] + ["Otra..."]
+                    seleccionada = st.selectbox(
+                        f"Selección #{i + 1}", options=opciones, key=f"seleccion_select_{i}"
+                    )
+                    if seleccionada == "Otra...":
+                        pata["seleccion"] = st.text_input(
+                            f"Selección #{i + 1} (personalizada)", key=f"seleccion_otra_{i}"
+                        )
+                    else:
+                        pata["seleccion"] = seleccionada
                 else:
-                    pata["seleccion"] = seleccionada
-            else:
-                pata["seleccion"] = st.text_input(
-                    f"Selección #{i + 1}", placeholder="Ej. Local, Más de 2.5...", key=f"seleccion_{i}"
+                    pata["seleccion"] = st.text_input(
+                        f"Selección #{i + 1}", placeholder="Ej. Local, Más de 2.5...", key=f"seleccion_{i}"
+                    )
+            with c3:
+                pata["cuota"] = st.number_input(
+                    f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=f"cuota_{i}"
                 )
-        with c3:
-            pata["cuota"] = st.number_input(
-                f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=f"cuota_{i}"
-            )
-        with c4:
-            pata["importe"] = st.number_input(
-                f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=f"importe_{i}"
-            )
-            sugerido_i = suggested_importes[i] if suggested_importes is not None else None
-            if sugerido_i is None and suggested_importes is not None:
-                st.caption("🔒 Pata de referencia (fijada a mano)")
-            elif sugerido_i is not None and sugerido_i == 0.0 and selecciones.count(selecciones[i]) > 1:
-                st.caption("💡 Sugerido: 0.00 € (ya cubierto por otra pata con la misma selección)")
-            elif sugerido_i is not None:
-                st.caption(f"💡 Sugerido: {sugerido_i:.2f} €")
+            with c4:
+                pata["importe"] = st.number_input(
+                    f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=f"importe_{i}"
+                )
+                sugerido_i = suggested_importes[i] if suggested_importes is not None else None
+                if sugerido_i is None and suggested_importes is not None:
+                    st.caption("🔒 Pata de referencia (fijada a mano)")
+                elif sugerido_i is not None and sugerido_i == 0.0 and selecciones.count(selecciones[i]) > 1:
+                    st.caption("💡 Sugerido: 0.00 € (ya cubierto por otra pata con la misma selección)")
+                elif sugerido_i is not None:
+                    st.caption(f"💡 Sugerido: {sugerido_i:.2f} €")
 
     importes = [p["importe"] for p in st.session_state.patas_temp]
     cuotas_finales = [p["cuota"] for p in st.session_state.patas_temp]
@@ -345,34 +347,32 @@ def _resolver_pendientes():
             importes_cierre_seleccionados = {}
             opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
             for pata in patas:
-                col1, col2, col3, col4, col5 = st.columns([2, 2, 1.3, 1.2, 1.3])
-                col1.write(pata["casa_apuestas"])
-                col2.write(pata["seleccion"])
-                col3.write(f"Cuota {pata['cuota']:.2f} · {pata['importe']:.2f} €")
-                resultado_sel = col4.selectbox(
-                    "Resultado",
-                    options=opciones_resultado,
-                    index=opciones_resultado.index(pata["resultado"]),
-                    key=f"resultado_pata_{pata['id']}",
-                    label_visibility="collapsed",
-                )
-                resultados_seleccionados[pata["id"]] = resultado_sel
-                if resultado_sel == "cerrada":
-                    importes_cierre_seleccionados[pata["id"]] = col5.number_input(
-                        "Importe de cierre (€)",
-                        min_value=0.0,
-                        step=1.0,
-                        format="%.2f",
-                        value=float(pata["importe_cierre"] or 0.0),
-                        key=f"importe_cierre_pata_{pata['id']}",
-                        label_visibility="collapsed",
+                with st.container(border=True):
+                    st.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}")
+                    st.caption(f"Cuota {pata['cuota']:.2f} · Importe apostado {pata['importe']:.2f} €")
+                    c1, c2 = st.columns(2)
+                    resultado_sel = c1.selectbox(
+                        "Resultado",
+                        options=opciones_resultado,
+                        index=opciones_resultado.index(pata["resultado"]),
+                        key=f"resultado_pata_{pata['id']}",
                     )
-                else:
-                    importes_cierre_seleccionados[pata["id"]] = None
+                    resultados_seleccionados[pata["id"]] = resultado_sel
+                    if resultado_sel == "cerrada":
+                        importes_cierre_seleccionados[pata["id"]] = c2.number_input(
+                            "Importe de cierre (€)",
+                            min_value=0.0,
+                            step=1.0,
+                            format="%.2f",
+                            value=float(pata["importe_cierre"] or 0.0),
+                            key=f"importe_cierre_pata_{pata['id']}",
+                        )
+                    else:
+                        importes_cierre_seleccionados[pata["id"]] = None
 
-            col_a, col_b = st.columns([1, 3])
+            col_a, col_b = st.columns(2)
             with col_a:
-                if st.button("Guardar y cerrar", key=f"cerrar_{surebet['id']}"):
+                if st.button("✅ Guardar y cerrar", key=f"cerrar_{surebet['id']}", use_container_width=True):
                     if any(r == "pendiente" for r in resultados_seleccionados.values()):
                         st.error("Marca el resultado de todas las patas antes de cerrar la surebet.")
                     else:
@@ -394,7 +394,7 @@ def _resolver_pendientes():
                         st.success(f"Surebet cerrada. Beneficio real: {beneficio_real:.2f} €")
                         st.rerun()
             with col_b:
-                if st.button("🗑️ Eliminar surebet", key=f"eliminar_{surebet['id']}"):
+                if st.button("🗑️ Eliminar surebet", key=f"eliminar_{surebet['id']}", use_container_width=True):
                     db.eliminar_surebet(surebet["id"])
                     st.rerun()
 

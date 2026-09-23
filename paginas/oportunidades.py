@@ -2,6 +2,7 @@
 """Pestaña de oportunidades detectadas automáticamente en el canal de Telegram."""
 
 import html
+import time
 from datetime import datetime
 
 import streamlit as st
@@ -100,11 +101,12 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
             importes_sugeridos = [None] * len(patas)
 
         for pata, sugerido in zip(patas, importes_sugeridos):
-            col1, col2, col3, col4 = st.columns([2, 3, 1, 1.5])
-            col1.markdown(_enlace_casa(pata["casa_apuestas"]), unsafe_allow_html=True)
-            col2.write(pata["seleccion"])
-            col3.write(f"Cuota {pata['cuota']:.2f}")
-            col4.write(f"💡 {sugerido:.2f} €" if sugerido is not None else "—")
+            with st.container(border=True):
+                st.markdown(
+                    f"{_enlace_casa(pata['casa_apuestas'])} — {pata['seleccion']}", unsafe_allow_html=True
+                )
+                sugerido_txt = f"💡 Sugerido: {sugerido:.2f} €" if sugerido is not None else "—"
+                st.caption(f"Cuota {pata['cuota']:.2f} · {sugerido_txt}")
 
         if beneficio is not None:
             st.success(
@@ -112,9 +114,11 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
                 f"invirtiendo {importe_total:.2f} €"
             )
 
-        col_a, col_b = st.columns([1, 1])
+        col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("✅ Usar en Registrar apuesta", key=f"usar_{oportunidad['id']}"):
+            if st.button(
+                "✅ Usar en Registrar apuesta", key=f"usar_{oportunidad['id']}", use_container_width=True
+            ):
                 st.session_state.patas_temp = [
                     {"casa_apuestas": p["casa_apuestas"], "seleccion": p["seleccion"], "cuota": p["cuota"]}
                     for p in patas
@@ -123,7 +127,7 @@ def _mostrar_oportunidad(oportunidad, patas, importe_base):
                 st.success("Cargada. Ve a la pestaña 'Registrar apuesta' para completarla.")
                 st.rerun()
         with col_b:
-            if st.button("🗑️ Descartar", key=f"descartar_{oportunidad['id']}"):
+            if st.button("🗑️ Descartar", key=f"descartar_{oportunidad['id']}", use_container_width=True):
                 db.eliminar_oportunidad(oportunidad["id"])
                 st.rerun()
 
@@ -146,7 +150,10 @@ def render():
         "para forzarlo al momento."
     )
 
-    _sincronizar_con_telegram()
+    ultimo_intento = st.session_state.get("_ultimo_intento_sync_telegram", 0.0)
+    if time.time() - ultimo_intento > 30:
+        st.session_state["_ultimo_intento_sync_telegram"] = time.time()
+        _sincronizar_con_telegram()
 
     importe_base = st.number_input(
         "Importe habitual a invertir por oportunidad (€)",

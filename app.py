@@ -8,6 +8,34 @@ from paginas import calculadora, dashboard, historial, oportunidades, registrar
 
 st.set_page_config(page_title="Alex Bets", page_icon="💶", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    /* Ajustes para pantallas pequeñas (móvil): menos aire alrededor,
+       botones a todo el ancho para acertar mejor con el dedo, y ninguna
+       columna se queda estrecha de más al apilarse. */
+    @media (max-width: 640px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+            padding-top: 2rem;
+        }
+        div[data-testid="stButton"] button,
+        div[data-testid="stFormSubmitButton"] button {
+            width: 100%;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 1.4rem;
+        }
+        div[data-testid="column"] {
+            min-width: 100% !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def _acceso_autorizado() -> bool:
     """Pantalla de contraseña antes de mostrar nada de la app. Si no hay

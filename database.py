@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 import psycopg2
+import streamlit as st
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import RealDictCursor
 
@@ -86,7 +87,6 @@ _pool = None
 
 def _connection_string() -> str:
     try:
-        import streamlit as st
         if "DATABASE_URL" in st.secrets:
             return st.secrets["DATABASE_URL"]
     except Exception:
@@ -157,15 +157,19 @@ def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct,
                VALUES (%s, %s, %s, %s, %s)""",
             [(surebet_id, p["casa_apuestas"], p["seleccion"], p["cuota"], p["importe"]) for p in patas],
         )
+        listar_surebets_pendientes.clear()
+        obtener_todo_dataframe.clear()
         return surebet_id
 
 
+@st.cache_data(ttl=15)
 def listar_surebets_pendientes():
     with get_conn() as cur:
         cur.execute("SELECT * FROM surebets WHERE estado = 'pendiente' ORDER BY fecha DESC, id DESC")
         return cur.fetchall()
 
 
+@st.cache_data(ttl=15)
 def listar_patas(surebet_id):
     with get_conn() as cur:
         cur.execute("SELECT * FROM patas WHERE surebet_id = %s ORDER BY id", (surebet_id,))
@@ -178,6 +182,8 @@ def actualizar_resultado_pata(pata_id, resultado, importe_cierre=None):
             "UPDATE patas SET resultado = %s, importe_cierre = %s WHERE id = %s",
             (resultado, importe_cierre, pata_id),
         )
+    listar_patas.clear()
+    obtener_todo_dataframe.clear()
 
 
 def cerrar_surebet(surebet_id, beneficio_real):
@@ -186,11 +192,16 @@ def cerrar_surebet(surebet_id, beneficio_real):
             "UPDATE surebets SET estado = 'resuelta', beneficio_real = %s WHERE id = %s",
             (beneficio_real, surebet_id),
         )
+    listar_surebets_pendientes.clear()
+    obtener_todo_dataframe.clear()
 
 
 def eliminar_surebet(surebet_id):
     with get_conn() as cur:
         cur.execute("DELETE FROM surebets WHERE id = %s", (surebet_id,))
+    listar_surebets_pendientes.clear()
+    listar_patas.clear()
+    obtener_todo_dataframe.clear()
 
 
 def firma_oportunidad(evento, patas):
@@ -240,6 +251,8 @@ def guardar_oportunidad(roi_pct, torneo, evento, comienza_en, empieza_en, texto_
                VALUES (%s, %s, %s, %s)""",
             [(oportunidad_id, p["casa_apuestas"], p["seleccion"], p["cuota"]) for p in patas],
         )
+        listar_oportunidades.clear()
+        listar_oportunidad_patas.clear()
         return oportunidad_id
 
 
@@ -249,8 +262,10 @@ def eliminar_oportunidades_caducadas():
         cur.execute(
             "DELETE FROM oportunidades WHERE empieza_en IS NOT NULL AND empieza_en <= %s", (_ahora(),)
         )
+    listar_oportunidades.clear()
 
 
+@st.cache_data(ttl=10)
 def listar_oportunidades(solo_no_usadas=True, limite=50):
     """Lista oportunidades cuyo evento todavía no ha empezado (o sin hora
     reconocida), más recientes primero por hora de inicio."""
@@ -268,6 +283,7 @@ def listar_oportunidades(solo_no_usadas=True, limite=50):
         return cur.fetchall()
 
 
+@st.cache_data(ttl=15)
 def listar_oportunidad_patas(oportunidad_id):
     with get_conn() as cur:
         cur.execute(
@@ -279,11 +295,14 @@ def listar_oportunidad_patas(oportunidad_id):
 def marcar_oportunidad_usada(oportunidad_id):
     with get_conn() as cur:
         cur.execute("UPDATE oportunidades SET usada = 1 WHERE id = %s", (oportunidad_id,))
+    listar_oportunidades.clear()
 
 
 def eliminar_oportunidad(oportunidad_id):
     with get_conn() as cur:
         cur.execute("DELETE FROM oportunidades WHERE id = %s", (oportunidad_id,))
+    listar_oportunidades.clear()
+    listar_oportunidad_patas.clear()
 
 
 def debe_sincronizar_oportunidades(cooldown_segundos=60):
@@ -307,6 +326,7 @@ def debe_sincronizar_oportunidades(cooldown_segundos=60):
         return True
 
 
+@st.cache_data(ttl=20)
 def obtener_todo_dataframe():
     """Devuelve todas las surebets con sus patas en formato ancho, listo para pandas.
 
