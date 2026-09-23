@@ -2,7 +2,6 @@
 """Pestaña de oportunidades detectadas automáticamente en el canal de Telegram."""
 
 import html
-import time
 from datetime import datetime
 
 import streamlit as st
@@ -145,14 +144,12 @@ def _sincronizar_con_telegram(forzar=False):
 def render():
     st.subheader("Oportunidades detectadas en Telegram")
     st.caption(
-        "Se sincroniza sola con el canal de Telegram cada vez que abres esta pestaña "
-        "(con un margen de un minuto para no conectar de más). Pulsa 'Actualizar ahora' "
-        "para forzarlo al momento."
+        "Se sincroniza sola con el canal de Telegram solo la primera vez que entras "
+        "en la sesión. Pulsa 'Actualizar ahora' para traer las nuevas en cualquier momento."
     )
 
-    ultimo_intento = st.session_state.get("_ultimo_intento_sync_telegram", 0.0)
-    if time.time() - ultimo_intento > 30:
-        st.session_state["_ultimo_intento_sync_telegram"] = time.time()
+    if not st.session_state.get("_sync_telegram_hecho"):
+        st.session_state["_sync_telegram_hecho"] = True
         _sincronizar_con_telegram()
 
     importe_base = st.number_input(

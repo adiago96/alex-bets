@@ -64,21 +64,20 @@ db.init_db()
 
 st.title("💶 Alex Bets — Gestor de Surebets")
 
-tab_oportunidades, tab_registrar, tab_calculadora, tab_historial, tab_dashboard = st.tabs(
-    ["🔭 Oportunidades", "📝 Registrar apuesta", "🧮 Calculadora", "📜 Historial", "📊 Dashboard"]
+PAGINAS = {
+    "🔭 Oportunidades": oportunidades,
+    "📝 Registrar apuesta": registrar,
+    "🧮 Calculadora": calculadora,
+    "📜 Historial": historial,
+    "📊 Dashboard": dashboard,
+}
+
+# Selector de página en vez de st.tabs(): con st.tabs(), Streamlit ejecuta el
+# contenido de las 5 pestañas en cada interacción (no solo la visible), lo que
+# hacía que cualquier clic en una pantalla recalculase también las otras 4 por
+# detrás. Con un selector normal, solo se ejecuta la página elegida.
+nombre_pagina = st.radio(
+    "Navegación", options=list(PAGINAS.keys()), horizontal=True, label_visibility="collapsed",
 )
 
-with tab_oportunidades:
-    oportunidades.render()
-
-with tab_registrar:
-    registrar.render()
-
-with tab_calculadora:
-    calculadora.render()
-
-with tab_historial:
-    historial.render()
-
-with tab_dashboard:
-    dashboard.render()
+PAGINAS[nombre_pagina].render()
