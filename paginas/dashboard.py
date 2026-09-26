@@ -1,6 +1,8 @@
 # paginas/dashboard.py
 """Pestaña de dashboard: totales, ROI y análisis por casa de apuestas / mercado."""
 
+import calendar as calmod
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -14,6 +16,8 @@ MESES_ES = {
     1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
     7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
 }
+
+DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
 
 def _cargar_datos():
@@ -84,6 +88,146 @@ def _kpis(df: pd.DataFrame):
     c3.metric("ROI", f"{roi:,.2f} %")
     c4.metric("Beneficio medio / surebet", f"{beneficio_medio:,.2f} €")
     c5.metric("Resueltas / Pendientes", f"{len(resueltas)} / {len(pendientes)}")
+
+
+def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
+    resueltas = df[df["estado"] == "resuelta"].copy()
+    if resueltas.empty:
+        st.info("Todavía no hay surebets resueltas para mostrar el calendario.")
+        return
+
+    resueltas["periodo"] = resueltas["fecha"].dt.to_period("M")
+    periodos_disponibles = sorted(surebets["fecha"].dt.to_period("M").unique())
+    if not periodos_disponibles:
+        return
+
+    hoy_periodo = pd.Timestamp.today().to_period("M")
+    periodo_default = hoy_periodo if hoy_periodo in periodos_disponibles else periodos_disponibles[-1]
+
+    if "calendario_periodo" not in st.session_state or st.session_state.calendario_periodo not in periodos_disponibles:
+        st.session_state.calendario_periodo = periodo_default
+
+    idx_actual = periodos_disponibles.index(st.session_state.calendario_periodo)
+
+    st.subheader("Calendario de apuestas")
+    nav_prev, nav_titulo, nav_next = st.columns([1, 6, 1])
+    with nav_prev:
+        if st.button("◀", disabled=idx_actual == 0, key="cal_prev", use_container_width=True):
+            st.session_state.calendario_periodo = periodos_disponibles[idx_actual - 1]
+            st.rerun()
+    with nav_next:
+        if st.button("▶", disabled=idx_actual == len(periodos_disponibles) - 1, key="cal_next", use_container_width=True):
+            st.session_state.calendario_periodo = periodos_disponibles[idx_actual + 1]
+            st.rerun()
+
+    periodo_sel = st.session_state.calendario_periodo
+    datos_mes = resueltas[resueltas["periodo"] == periodo_sel]
+
+    beneficio_mes = datos_mes["beneficio_real"].sum()
+    num_apuestas_mes = len(datos_mes)
+    color_total = COLOR_GANANCIA if beneficio_mes >= 0 else COLOR_PERDIDA
+
+    with nav_titulo:
+        st.markdown(
+            f"<div style='text-align:center; font-size:1.15rem; font-weight:600;'>"
+            f"{MESES_ES[periodo_sel.month]} {periodo_sel.year}"
+            f"<span style='color:{color_total}; margin-left:12px;'>{beneficio_mes:+,.2f} €</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    por_dia = datos_mes.groupby(datos_mes["fecha"].dt.day).agg(
+        beneficio=("beneficio_real", "sum"),
+        num=("id", "count"),
+    )
+
+    anio, mes = periodo_sel.year, periodo_sel.month
+    primer_dia_semana, num_dias = calmod.monthrange(anio, mes)  # lunes=0
+
+    celdas_html = "".join(f"<div class='cal-header'>{nombre}</div>" for nombre in DIAS_ES)
+    celdas_html += "<div class='cal-celda cal-vacia'></div>" * primer_dia_semana
+
+    for dia in range(1, num_dias + 1):
+        if dia in por_dia.index:
+            beneficio = por_dia.loc[dia, "beneficio"]
+            num = int(por_dia.loc[dia, "num"])
+            color = COLOR_GANANCIA if beneficio >= 0 else COLOR_PERDIDA
+            celdas_html += (
+                f"<div class='cal-celda cal-con-datos' style='background:{color};'>"
+                f"<div class='cal-dia'>{dia}</div>"
+                f"<div class='cal-badge'>{num}</div>"
+                f"<div class='cal-importe'>{beneficio:,.0f} €</div>"
+                f"</div>"
+            )
+        else:
+            celdas_html += f"<div class='cal-celda'><div class='cal-dia'>{dia}</div></div>"
+
+    st.markdown(
+        f"""
+        <style>
+        .cal-grid {{
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 6px;
+            margin-top: 10px;
+        }}
+        .cal-header {{
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            opacity: 0.6;
+            padding-bottom: 4px;
+        }}
+        .cal-celda {{
+            position: relative;
+            min-height: 68px;
+            border-radius: 8px;
+            padding: 6px;
+            background: rgba(128,128,128,0.08);
+        }}
+        .cal-vacia {{
+            background: transparent;
+        }}
+        .cal-con-datos {{
+            color: white;
+        }}
+        .cal-dia {{
+            font-size: 0.75rem;
+            opacity: 0.75;
+        }}
+        .cal-con-datos .cal-dia {{
+            opacity: 0.9;
+        }}
+        .cal-badge {{
+            position: absolute;
+            top: 4px;
+            right: 6px;
+            font-size: 0.65rem;
+            background: rgba(0,0,0,0.25);
+            border-radius: 10px;
+            padding: 1px 6px;
+        }}
+        .cal-importe {{
+            position: absolute;
+            bottom: 6px;
+            left: 6px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }}
+        </style>
+        <div class="cal-grid">
+        {celdas_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    apuesta_media_mes = datos_mes["importe_total"].mean() if not datos_mes.empty else 0.0
+    beneficio_medio_mes = datos_mes["beneficio_real"].mean() if not datos_mes.empty else 0.0
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Apuestas del mes", num_apuestas_mes)
+    c2.metric("Apuesta media", f"{apuesta_media_mes:,.2f} €")
+    c3.metric("Beneficio medio", f"{beneficio_medio_mes:,.2f} €")
 
 
 def _grafico_evolucion(df: pd.DataFrame):
@@ -212,6 +356,8 @@ def render():
         return
 
     _kpis(df)
+    st.markdown("---")
+    _calendario_apuestas(surebets, df)
     st.markdown("---")
     st.subheader("Resumen por mes")
     _resumen_mensual(df)
