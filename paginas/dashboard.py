@@ -168,21 +168,21 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
         .cal-grid {{
             display: grid;
             grid-template-columns: repeat(7, 1fr);
-            gap: 6px;
+            gap: 4px;
             margin-top: 10px;
         }}
         .cal-header {{
             text-align: center;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             font-weight: 600;
             opacity: 0.6;
             padding-bottom: 4px;
         }}
         .cal-celda {{
             position: relative;
-            min-height: 68px;
-            border-radius: 8px;
-            padding: 6px;
+            min-height: 48px;
+            border-radius: 6px;
+            padding: 4px;
             background: rgba(128,128,128,0.08);
         }}
         .cal-vacia {{
@@ -192,7 +192,7 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
             color: white;
         }}
         .cal-dia {{
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             opacity: 0.75;
         }}
         .cal-con-datos .cal-dia {{
@@ -200,18 +200,18 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
         }}
         .cal-badge {{
             position: absolute;
-            top: 4px;
-            right: 6px;
-            font-size: 0.65rem;
+            top: 3px;
+            right: 4px;
+            font-size: 0.55rem;
             background: rgba(0,0,0,0.25);
             border-radius: 10px;
-            padding: 1px 6px;
+            padding: 0px 5px;
         }}
         .cal-importe {{
             position: absolute;
-            bottom: 6px;
-            left: 6px;
-            font-size: 0.85rem;
+            bottom: 4px;
+            left: 4px;
+            font-size: 0.7rem;
             font-weight: 700;
         }}
         </style>
@@ -357,10 +357,12 @@ def render():
 
     _kpis(df)
     st.markdown("---")
-    _calendario_apuestas(surebets, df)
-    st.markdown("---")
-    st.subheader("Resumen por mes")
-    _resumen_mensual(df)
+    col_calendario, col_resumen = st.columns(2)
+    with col_calendario:
+        _calendario_apuestas(surebets, df)
+    with col_resumen:
+        st.subheader("Resumen por mes")
+        _resumen_mensual(df)
     st.markdown("---")
     _grafico_evolucion(df)
     st.markdown("---")
