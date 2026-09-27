@@ -166,6 +166,24 @@ def cerrar_surebet(surebet_id, beneficio_real):
     obtener_todo_dataframe.clear()
 
 
+def reabrir_surebet(surebet_id):
+    """Deshace el cierre de una surebet resuelta por error: la vuelve a
+    'pendiente' y pone el resultado de todas sus patas otra vez en
+    'pendiente', para poder corregirlo desde 'Registrar apuesta'."""
+    with get_conn() as cur:
+        cur.execute(
+            "UPDATE surebets SET estado = 'pendiente', beneficio_real = NULL WHERE id = %s",
+            (surebet_id,),
+        )
+        cur.execute(
+            "UPDATE patas SET resultado = 'pendiente', importe_cierre = NULL WHERE surebet_id = %s",
+            (surebet_id,),
+        )
+    listar_surebets_pendientes.clear()
+    listar_patas.clear()
+    obtener_todo_dataframe.clear()
+
+
 def eliminar_surebet(surebet_id):
     with get_conn() as cur:
         cur.execute("DELETE FROM surebets WHERE id = %s", (surebet_id,))
