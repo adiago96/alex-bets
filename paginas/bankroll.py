@@ -22,6 +22,7 @@ import database as db
 
 NUEVA_CASA = "+ Añadir nueva casa…"
 TIPOS_MOVIMIENTO = ["Depósito", "Retirada"]
+TIPO_A_ETIQUETA = {"deposito": "Depósito", "retirada": "Retirada"}
 
 
 def _mostrar_totales(casas):
@@ -46,8 +47,8 @@ def _historial_y_formulario_movimientos(nombre, movimientos_casa):
                     hist_txt = " · histórico (no afectó al líquido)" if m["es_historico"] else ""
                     nota_txt = f" · {m['nota']}" if m["nota"] else ""
                     st.write(
-                        f"{m['fecha']} · {m['tipo'].capitalize()} · {signo}{m['importe']:,.2f} €"
-                        f"{hist_txt}{nota_txt}"
+                        f"{m['fecha']} · {TIPO_A_ETIQUETA.get(m['tipo'], m['tipo'])} · "
+                        f"{signo}{m['importe']:,.2f} €{hist_txt}{nota_txt}"
                     )
                 with col_del:
                     if st.button("🗑️", key=f"del_mov_{m['id']}"):
