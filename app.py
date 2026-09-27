@@ -4,7 +4,7 @@
 import streamlit as st
 
 import database as db
-from paginas import calculadora, dashboard, historial, registrar
+from paginas import bankroll, calculadora, dashboard, historial, registrar
 
 st.set_page_config(page_title="Alex Bets", page_icon="💶", layout="wide")
 
@@ -69,6 +69,7 @@ PAGINAS = {
     "🧮 Calculadora": calculadora,
     "📜 Historial": historial,
     "📊 Dashboard": dashboard,
+    "💰 Bankroll": bankroll,
 }
 
 # Selector de página en vez de st.tabs(): con st.tabs(), Streamlit ejecuta el

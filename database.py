@@ -46,6 +46,18 @@ CREATE TABLE IF NOT EXISTS patas (
 CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);
 CREATE INDEX IF NOT EXISTS idx_surebets_estado ON surebets(estado);
 CREATE INDEX IF NOT EXISTS idx_surebets_fecha ON surebets(fecha);
+
+CREATE TABLE IF NOT EXISTS movimientos_casa (
+    id SERIAL PRIMARY KEY,
+    casa_apuestas TEXT NOT NULL,
+    tipo TEXT NOT NULL,  -- deposito | retirada | ajuste
+    importe DOUBLE PRECISION NOT NULL,  -- signo incluido: positivo entra, negativo sale
+    fecha TEXT NOT NULL,
+    nota TEXT,
+    creado_en TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_movimientos_casa ON movimientos_casa(casa_apuestas);
 """
 
 _pool = None
@@ -164,6 +176,31 @@ def eliminar_surebet(surebet_id):
     listar_surebets_pendientes.clear()
     listar_patas.clear()
     obtener_todo_dataframe.clear()
+
+
+def crear_movimiento_casa(casa_apuestas, tipo, importe, fecha, nota=None):
+    """Registra un depósito, retirada o ajuste manual del saldo en una casa de
+    apuestas. `importe` va con signo: positivo si entra dinero, negativo si sale."""
+    with get_conn() as cur:
+        cur.execute(
+            """INSERT INTO movimientos_casa (casa_apuestas, tipo, importe, fecha, nota, creado_en)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (casa_apuestas, tipo, importe, fecha, nota, _ahora()),
+        )
+    listar_movimientos_casa.clear()
+
+
+@st.cache_data(ttl=15)
+def listar_movimientos_casa():
+    with get_conn() as cur:
+        cur.execute("SELECT * FROM movimientos_casa ORDER BY fecha DESC, id DESC")
+        return cur.fetchall()
+
+
+def eliminar_movimiento_casa(movimiento_id):
+    with get_conn() as cur:
+        cur.execute("DELETE FROM movimientos_casa WHERE id = %s", (movimiento_id,))
+    listar_movimientos_casa.clear()
 
 
 @st.cache_data(ttl=20)
