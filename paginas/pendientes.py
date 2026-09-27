@@ -10,6 +10,7 @@ from calculos import calcular_resultado_real
 
 ICONOS_DEPORTE = {
     "Fútbol": "⚽",
+    "Fútbol Americano": "🏈",
     "Baloncesto": "🏀",
     "Tenis": "🎾",
     "Voleibol": "🏐",

@@ -16,6 +16,7 @@ from calculos import (
 
 DEPORTES_HABITUALES = [
     "Fútbol",
+    "Fútbol Americano",
     "Baloncesto",
     "Tenis",
     "Voleibol",
@@ -37,6 +38,7 @@ MERCADOS_POR_DEPORTE = {
         "1X2", "Doble oportunidad", "Over/Under goles", "Ambos marcan (BTTS)",
         "Hándicap asiático", "Hándicap europeo", "Córners", "Tarjetas",
     ],
+    "Fútbol Americano": ["Ganador del partido/set", "Over/Under puntos", "Hándicap de puntos"],
     "Baloncesto": ["Ganador del partido/set", "Over/Under puntos", "Hándicap de puntos"],
     "Tenis": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under juegos"],
     "Voleibol": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under puntos"],
