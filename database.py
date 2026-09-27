@@ -47,17 +47,12 @@ CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);
 CREATE INDEX IF NOT EXISTS idx_surebets_estado ON surebets(estado);
 CREATE INDEX IF NOT EXISTS idx_surebets_fecha ON surebets(fecha);
 
-CREATE TABLE IF NOT EXISTS movimientos_casa (
-    id SERIAL PRIMARY KEY,
-    casa_apuestas TEXT NOT NULL,
-    tipo TEXT NOT NULL,  -- deposito | retirada | ajuste
-    importe DOUBLE PRECISION NOT NULL,  -- signo incluido: positivo entra, negativo sale
-    fecha TEXT NOT NULL,
-    nota TEXT,
-    creado_en TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS bankroll_casas (
+    casa_apuestas TEXT PRIMARY KEY,
+    liquido DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pendiente DOUBLE PRECISION NOT NULL DEFAULT 0,
+    actualizado_en TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_movimientos_casa ON movimientos_casa(casa_apuestas);
 """
 
 _pool = None
@@ -178,29 +173,34 @@ def eliminar_surebet(surebet_id):
     obtener_todo_dataframe.clear()
 
 
-def crear_movimiento_casa(casa_apuestas, tipo, importe, fecha, nota=None):
-    """Registra un depósito, retirada o ajuste manual del saldo en una casa de
-    apuestas. `importe` va con signo: positivo si entra dinero, negativo si sale."""
+def guardar_bankroll(casa_apuestas, liquido, pendiente):
+    """Fija directamente el líquido y el importe en juego de una casa de
+    apuestas (crea la casa si no existía). Pensado para editarse a mano: no se
+    deriva de las apuestas registradas, así siempre puede reflejar la realidad
+    aunque el historial de patas esté incompleto o desactualizado."""
     with get_conn() as cur:
         cur.execute(
-            """INSERT INTO movimientos_casa (casa_apuestas, tipo, importe, fecha, nota, creado_en)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (casa_apuestas, tipo, importe, fecha, nota, _ahora()),
+            """INSERT INTO bankroll_casas (casa_apuestas, liquido, pendiente, actualizado_en)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (casa_apuestas) DO UPDATE
+               SET liquido = EXCLUDED.liquido, pendiente = EXCLUDED.pendiente,
+                   actualizado_en = EXCLUDED.actualizado_en""",
+            (casa_apuestas, liquido, pendiente, _ahora()),
         )
-    listar_movimientos_casa.clear()
+    listar_bankroll.clear()
 
 
 @st.cache_data(ttl=15)
-def listar_movimientos_casa():
+def listar_bankroll():
     with get_conn() as cur:
-        cur.execute("SELECT * FROM movimientos_casa ORDER BY fecha DESC, id DESC")
+        cur.execute("SELECT * FROM bankroll_casas ORDER BY casa_apuestas")
         return cur.fetchall()
 
 
-def eliminar_movimiento_casa(movimiento_id):
+def eliminar_bankroll_casa(casa_apuestas):
     with get_conn() as cur:
-        cur.execute("DELETE FROM movimientos_casa WHERE id = %s", (movimiento_id,))
-    listar_movimientos_casa.clear()
+        cur.execute("DELETE FROM bankroll_casas WHERE casa_apuestas = %s", (casa_apuestas,))
+    listar_bankroll.clear()
 
 
 @st.cache_data(ttl=20)
