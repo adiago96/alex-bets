@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS bankroll_casas (
     pendiente DOUBLE PRECISION NOT NULL DEFAULT 0,
     actualizado_en TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS movimientos_bankroll (
+    id SERIAL PRIMARY KEY,
+    casa_apuestas TEXT NOT NULL,
+    tipo TEXT NOT NULL,  -- deposito | retirada
+    importe DOUBLE PRECISION NOT NULL,  -- siempre positivo; el signo lo da 'tipo'
+    fecha TEXT NOT NULL,
+    nota TEXT,
+    es_historico BOOLEAN NOT NULL DEFAULT FALSE,  -- importado de antes de llevar el bankroll: no toca el líquido
+    creado_en TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_movimientos_bankroll_casa ON movimientos_bankroll(casa_apuestas);
 """
 
 _pool = None
@@ -223,6 +236,65 @@ def eliminar_bankroll_casa(casa_apuestas):
         cur.execute("DELETE FROM bankroll_casas WHERE casa_apuestas = %s", (casa_apuestas,))
     listar_bankroll.clear()
     listar_nombres_casas.clear()
+
+
+def _ajustar_liquido(casa_apuestas, delta):
+    """Suma (o resta, si delta es negativo) al líquido ya guardado de una casa,
+    sin tocar lo que tenga en juego. Crea la casa si todavía no existía."""
+    with get_conn() as cur:
+        cur.execute(
+            """INSERT INTO bankroll_casas (casa_apuestas, liquido, pendiente, actualizado_en)
+               VALUES (%s, %s, 0, %s)
+               ON CONFLICT (casa_apuestas) DO UPDATE
+               SET liquido = bankroll_casas.liquido + EXCLUDED.liquido,
+                   actualizado_en = EXCLUDED.actualizado_en""",
+            (casa_apuestas, delta, _ahora()),
+        )
+    listar_bankroll.clear()
+    listar_nombres_casas.clear()
+
+
+def registrar_movimiento_bankroll(casa_apuestas, tipo, importe, fecha, nota=None, es_historico=False):
+    """Registra un depósito o retirada en una casa. `importe` siempre positivo;
+    el signo lo da `tipo`. Si `es_historico` es True (movimientos de antes de
+    llevar el bankroll en la app), solo queda guardado como referencia y NO
+    toca el líquido actual, que ya se dio de alta a mano. Si no, además ajusta
+    el líquido de esa casa: un depósito lo sube, una retirada lo baja."""
+    with get_conn() as cur:
+        cur.execute(
+            """INSERT INTO movimientos_bankroll
+               (casa_apuestas, tipo, importe, fecha, nota, es_historico, creado_en)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (casa_apuestas, tipo, importe, fecha, nota, es_historico, _ahora()),
+        )
+        movimiento_id = cur.fetchone()["id"]
+    if not es_historico:
+        _ajustar_liquido(casa_apuestas, importe if tipo == "deposito" else -importe)
+    listar_movimientos_bankroll.clear()
+    return movimiento_id
+
+
+@st.cache_data(ttl=15)
+def listar_movimientos_bankroll():
+    with get_conn() as cur:
+        cur.execute("SELECT * FROM movimientos_bankroll ORDER BY fecha DESC, id DESC")
+        return cur.fetchall()
+
+
+def eliminar_movimiento_bankroll(movimiento_id):
+    """Borra un movimiento y, si no era histórico, deshace su efecto sobre el
+    líquido de la casa (para que borrar un depósito/retirada mal metido no
+    deje el líquido descuadrado)."""
+    with get_conn() as cur:
+        cur.execute(
+            "SELECT casa_apuestas, tipo, importe, es_historico FROM movimientos_bankroll WHERE id = %s",
+            (movimiento_id,),
+        )
+        mov = cur.fetchone()
+        cur.execute("DELETE FROM movimientos_bankroll WHERE id = %s", (movimiento_id,))
+    if mov and not mov["es_historico"]:
+        _ajustar_liquido(mov["casa_apuestas"], -mov["importe"] if mov["tipo"] == "deposito" else mov["importe"])
+    listar_movimientos_bankroll.clear()
 
 
 @st.cache_data(ttl=15)
