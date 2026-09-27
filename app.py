@@ -4,7 +4,7 @@
 import streamlit as st
 
 import database as db
-from paginas import bankroll, calculadora, dashboard, historial, registrar
+from paginas import bankroll, calculadora, dashboard, historial, pendientes, registrar
 
 st.set_page_config(page_title="Alex Bets", page_icon="💶", layout="wide")
 
@@ -66,6 +66,7 @@ st.title("💶 Alex Bets — Gestor de Surebets")
 
 PAGINAS = {
     "📝 Registrar apuesta": registrar,
+    "⏳ Pendientes": pendientes,
     "🧮 Calculadora": calculadora,
     "📜 Historial": historial,
     "📊 Dashboard": dashboard,

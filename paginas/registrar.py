@@ -1,5 +1,5 @@
 # paginas/registrar.py
-"""Pestaña de registro de nuevas surebets y resolución de las pendientes."""
+"""Pestaña de registro de nuevas surebets (ver 'pendientes.py' para resolverlas)."""
 
 from datetime import date
 
@@ -11,7 +11,6 @@ from calculos import (
     calcular_beneficios_por_seleccion,
     calcular_importe_total_para_beneficio_agrupado,
     calcular_reparto_desde_grupo_fijo,
-    calcular_resultado_real,
     calcular_sugerencia_agrupada,
 )
 
@@ -30,21 +29,38 @@ DEPORTES_HABITUALES = [
     "Esports",
 ]
 
-MERCADOS_HABITUALES = [
-    "1X2",
-    "Doble oportunidad",
-    "Over/Under goles",
-    "Ambos marcan (BTTS)",
-    "Hándicap asiático",
-    "Hándicap europeo",
-    "Córners",
-    "Tarjetas",
-    "Ganador del partido/set",
-    "Hándicap de sets/juegos",
-]
+# Mercados típicos por deporte (para no ofrecer p.ej. "Over/Under goles" al
+# registrar un partido de baloncesto). Si el deporte es "Otro..." o no está en
+# esta lista, se ofrecen todos los mercados conocidos.
+MERCADOS_POR_DEPORTE = {
+    "Fútbol": [
+        "1X2", "Doble oportunidad", "Over/Under goles", "Ambos marcan (BTTS)",
+        "Hándicap asiático", "Hándicap europeo", "Córners", "Tarjetas",
+    ],
+    "Baloncesto": ["Ganador del partido/set", "Over/Under puntos", "Hándicap de puntos"],
+    "Tenis": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under juegos"],
+    "Voleibol": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under puntos"],
+    "Balonmano": [
+        "1X2", "Doble oportunidad", "Over/Under goles", "Ambos marcan (BTTS)", "Hándicap de goles",
+    ],
+    "Tenis de mesa": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under puntos"],
+    "Béisbol": ["Ganador del partido/set", "Over/Under carreras", "Hándicap de carreras (Run Line)"],
+    "Hockey hielo": ["1X2", "Doble oportunidad", "Over/Under goles", "Hándicap de goles"],
+    "Rugby": ["1X2", "Doble oportunidad", "Over/Under puntos", "Hándicap de puntos"],
+    "Boxeo/MMA": ["Ganador del combate", "Over/Under asaltos", "Irá a decisión"],
+    "Fórmula 1/Motor": ["Ganador de la carrera", "Podio", "Ganador de la clasificación", "Vuelta rápida"],
+    "Esports": ["Ganador del partido/set", "Over/Under mapas", "Hándicap de mapas"],
+}
+
+# Todos los mercados conocidos, para cuando el deporte no está en la lista de
+# arriba (p.ej. se escribió a mano en "Otro...").
+MERCADOS_HABITUALES = sorted({m for mercados in MERCADOS_POR_DEPORTE.values() for m in mercados})
 
 # Mercados donde la selección es "Más de X" / "Menos de X" con una línea numérica.
-MERCADOS_CON_LINEA = ["Over/Under goles", "Córners", "Tarjetas"]
+MERCADOS_CON_LINEA = [
+    "Over/Under goles", "Córners", "Tarjetas", "Over/Under puntos",
+    "Over/Under juegos", "Over/Under carreras", "Over/Under asaltos", "Over/Under mapas",
+]
 
 # Mercados de hándicap: la selección es un lado + el valor del hándicap (puede
 # ser distinto en cada casa, p.ej. -4.5 en una y +3.5 en otra para jugar una middle).
@@ -52,6 +68,10 @@ MERCADOS_CON_HANDICAP = {
     "Hándicap asiático": ["Local", "Visitante"],
     "Hándicap europeo": ["Local", "Empate", "Visitante"],
     "Hándicap de sets/juegos": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
+    "Hándicap de puntos": ["Local", "Visitante"],
+    "Hándicap de goles": ["Local", "Visitante"],
+    "Hándicap de carreras (Run Line)": ["Local", "Visitante"],
+    "Hándicap de mapas": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
 }
 
 # Selecciones habituales para el resto de mercados con opciones cerradas.
@@ -60,7 +80,17 @@ SELECCIONES_POR_MERCADO = {
     "Doble oportunidad": ["Local o Empate", "Local o Visitante", "Empate o Visitante"],
     "Ambos marcan (BTTS)": ["Sí", "No"],
     "Ganador del partido/set": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
+    "Ganador del combate": ["Peleador 1", "Peleador 2"],
+    "Irá a decisión": ["Sí", "No"],
 }
+
+# Prefijos de las claves de session_state que dependen del mercado elegido:
+# hay que limpiarlas cuando cambia el deporte o el mercado para que no se
+# quede guardado un valor que ya no es una opción válida del nuevo desplegable.
+_PREFIJOS_SELECCION_PATA = [
+    "seleccion_", "seleccion_tipo_", "seleccion_linea_",
+    "seleccion_lado_", "seleccion_handicap_", "seleccion_select_", "seleccion_otra_",
+]
 
 
 def _init_state():
@@ -69,6 +99,28 @@ def _init_state():
             {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
             {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
         ]
+    st.session_state.setdefault("form_version", 0)
+
+
+def _clave(nombre):
+    """Clave de un widget del formulario, con la versión actual incluida.
+
+    Streamlit no reinicia un widget a su valor por defecto solo con borrar su
+    entrada de session_state y volver a ejecutar el script (el navegador
+    conserva lo último que mostró para esa misma key); hace falta darle una
+    key distinta. Por eso, al guardar una surebet subimos `form_version`: con
+    eso cambian TODAS las keys del formulario a la vez y cada widget nace de
+    cero, vacío, en la siguiente ejecución."""
+    return f"{nombre}_v{st.session_state.form_version}"
+
+
+def _limpiar_selecciones_patas():
+    """Borra los valores de selección de cada pata (que dependen del mercado
+    elegido) para que no quede guardado uno que ya no es válido si el
+    desplegable cambia de opciones."""
+    for i in range(len(st.session_state.patas_temp)):
+        for prefijo in _PREFIJOS_SELECCION_PATA:
+            st.session_state.pop(_clave(f"{prefijo}{i}"), None)
 
 
 def _formulario_nueva_surebet():
@@ -76,26 +128,49 @@ def _formulario_nueva_surebet():
 
     col_a, col_b = st.columns(2)
     with col_a:
-        fecha = st.date_input("Fecha", value=date.today())
+        fecha = st.date_input("Fecha", value=date.today(), key=_clave("fecha_nueva_surebet"))
         deporte = st.selectbox(
             "Deporte",
             options=[""] + DEPORTES_HABITUALES + ["Otro..."],
             index=0,
-            key="deporte_select",
+            key=_clave("deporte_select"),
         )
         if deporte == "Otro...":
-            deporte = st.text_input("Nombre del deporte", key="deporte_otro")
-        evento = st.text_input("Evento", placeholder="Ej. Real Madrid vs Barcelona")
+            deporte = st.text_input("Nombre del deporte", key=_clave("deporte_otro"))
+        evento = st.text_input(
+            "Evento", placeholder="Ej. Real Madrid vs Barcelona", key=_clave("evento_nueva_surebet")
+        )
     with col_b:
+        # Si el deporte acaba de cambiar, el mercado elegido para el deporte
+        # anterior puede no tener sentido (o no existir siquiera) en la nueva
+        # lista: se limpia para forzar a elegir uno válido en vez de arrastrar
+        # uno inválido que rompería el desplegable.
+        if st.session_state.get("_deporte_anterior") != deporte:
+            st.session_state.pop(_clave("mercado_select"), None)
+            st.session_state.pop(_clave("mercado_otro"), None)
+            _limpiar_selecciones_patas()
+            st.session_state["_deporte_anterior"] = deporte
+
+        mercados_disponibles = MERCADOS_POR_DEPORTE.get(deporte, MERCADOS_HABITUALES)
         mercado = st.selectbox(
             "Mercado",
-            options=[""] + MERCADOS_HABITUALES + ["Otro..."],
+            options=[""] + mercados_disponibles + ["Otro..."],
             index=0,
-            key="mercado_select",
+            key=_clave("mercado_select"),
         )
         if mercado == "Otro...":
-            mercado = st.text_input("Nombre del mercado", key="mercado_otro")
-        notas = st.text_input("Notas (opcional)", placeholder="Cualquier detalle relevante")
+            mercado = st.text_input("Nombre del mercado", key=_clave("mercado_otro"))
+
+        # Igual que con el deporte: si el mercado cambia, las selecciones ya
+        # elegidas en cada pata (ligadas a las opciones del mercado anterior)
+        # dejan de ser válidas.
+        if st.session_state.get("_mercado_anterior") != mercado:
+            _limpiar_selecciones_patas()
+            st.session_state["_mercado_anterior"] = mercado
+
+        notas = st.text_input(
+            "Notas (opcional)", placeholder="Cualquier detalle relevante", key=_clave("notas_nueva_surebet")
+        )
 
     st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
 
@@ -106,8 +181,6 @@ def _formulario_nueva_surebet():
     with col_btn2:
         if st.button("➖ Quitar última pata") and len(st.session_state.patas_temp) > 2:
             st.session_state.patas_temp.pop()
-
-    num_patas = len(st.session_state.patas_temp)
 
     st.markdown("---")
     st.markdown("**Sugerencia de importes** (opcional, siempre puedes escribir el importe a mano en cada pata)")
@@ -125,12 +198,12 @@ def _formulario_nueva_surebet():
     # campo, session_state ya tiene el valor nuevo aunque el widget de la pata
     # todavía no se haya vuelto a dibujar en esta ejecución.
     cuotas = [
-        st.session_state.get(f"cuota_{i}", p.get("cuota", 1.01))
+        st.session_state.get(_clave(f"cuota_{i}"), p.get("cuota", 1.01))
         for i, p in enumerate(st.session_state.patas_temp)
     ]
     selecciones = [p.get("seleccion", "") for p in st.session_state.patas_temp]
     importes_actuales = [
-        st.session_state.get(f"importe_{i}", p.get("importe", 0.0)) or 0.0
+        st.session_state.get(_clave(f"importe_{i}"), p.get("importe", 0.0)) or 0.0
         for i, p in enumerate(st.session_state.patas_temp)
     ]
 
@@ -174,7 +247,7 @@ def _formulario_nueva_surebet():
     if suggested_importes is not None and st.button("🪄 Aplicar sugerencia a todas las patas"):
         for i, importe in enumerate(suggested_importes):
             if importe is not None:
-                st.session_state[f"importe_{i}"] = round(importe, 2)
+                st.session_state[_clave(f"importe_{i}")] = round(importe, 2)
         st.rerun()
 
     st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
@@ -190,51 +263,56 @@ def _formulario_nueva_surebet():
                     f"Casa de apuestas #{i + 1}",
                     options=[""] + casas_conocidas + ["Otra..."],
                     index=0,
-                    key=f"casa_{i}",
+                    key=_clave(f"casa_{i}"),
                 )
                 if pata["casa_apuestas"] == "Otra...":
-                    pata["casa_apuestas"] = st.text_input("Nombre de la casa", key=f"casa_otra_{i}").strip()
+                    pata["casa_apuestas"] = st.text_input(
+                        "Nombre de la casa", key=_clave(f"casa_otra_{i}")
+                    ).strip()
             with c2:
                 if mercado in MERCADOS_CON_LINEA:
                     sub1, sub2 = st.columns([1, 1])
                     tipo_linea = sub1.selectbox(
-                        f"Tipo #{i + 1}", options=["Más de", "Menos de"], key=f"seleccion_tipo_{i}"
+                        f"Tipo #{i + 1}", options=["Más de", "Menos de"], key=_clave(f"seleccion_tipo_{i}")
                     )
                     linea = sub2.number_input(
-                        f"Línea #{i + 1}", min_value=0.0, step=0.5, format="%.2f", key=f"seleccion_linea_{i}"
+                        f"Línea #{i + 1}", min_value=0.0, step=0.5, format="%.2f",
+                        key=_clave(f"seleccion_linea_{i}"),
                     )
                     pata["seleccion"] = f"{tipo_linea} {linea:g}"
                 elif mercado in MERCADOS_CON_HANDICAP:
                     sub1, sub2 = st.columns([1, 1])
                     lado = sub1.selectbox(
-                        f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado], key=f"seleccion_lado_{i}"
+                        f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado],
+                        key=_clave(f"seleccion_lado_{i}"),
                     )
                     linea = sub2.number_input(
-                        f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=f"seleccion_handicap_{i}"
+                        f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=_clave(f"seleccion_handicap_{i}")
                     )
                     pata["seleccion"] = f"{lado} {linea:+g}"
                 elif mercado in SELECCIONES_POR_MERCADO:
                     opciones = SELECCIONES_POR_MERCADO[mercado] + ["Otra..."]
                     seleccionada = st.selectbox(
-                        f"Selección #{i + 1}", options=opciones, key=f"seleccion_select_{i}"
+                        f"Selección #{i + 1}", options=opciones, key=_clave(f"seleccion_select_{i}")
                     )
                     if seleccionada == "Otra...":
                         pata["seleccion"] = st.text_input(
-                            f"Selección #{i + 1} (personalizada)", key=f"seleccion_otra_{i}"
+                            f"Selección #{i + 1} (personalizada)", key=_clave(f"seleccion_otra_{i}")
                         )
                     else:
                         pata["seleccion"] = seleccionada
                 else:
                     pata["seleccion"] = st.text_input(
-                        f"Selección #{i + 1}", placeholder="Ej. Local, Más de 2.5...", key=f"seleccion_{i}"
+                        f"Selección #{i + 1}", placeholder="Ej. Local, Más de 2.5...",
+                        key=_clave(f"seleccion_{i}"),
                     )
             with c3:
                 pata["cuota"] = st.number_input(
-                    f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=f"cuota_{i}"
+                    f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=_clave(f"cuota_{i}")
                 )
             with c4:
                 pata["importe"] = st.number_input(
-                    f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=f"importe_{i}"
+                    f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=_clave(f"importe_{i}")
                 )
                 sugerido_i = suggested_importes[i] if suggested_importes is not None else None
                 if sugerido_i is None and suggested_importes is not None:
@@ -279,7 +357,7 @@ def _formulario_nueva_surebet():
             )
             confirmar_riesgo = st.checkbox(
                 "Entiendo el riesgo y quiero guardar esta apuesta de todas formas",
-                key="confirmar_riesgo",
+                key=_clave("confirmar_riesgo"),
             )
     else:
         beneficios = None
@@ -314,90 +392,17 @@ def _formulario_nueva_surebet():
                 notas=notas,
                 patas=patas_guardar,
             )
-            for i in range(num_patas):
-                st.session_state.pop(f"importe_{i}", None)
+            st.session_state.form_version += 1
             st.session_state.patas_temp = [
                 {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
                 {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
             ]
+            st.session_state.pop("_deporte_anterior", None)
+            st.session_state.pop("_mercado_anterior", None)
             st.success("Surebet guardada correctamente.")
             st.rerun()
-
-
-def _resolver_pendientes():
-    st.subheader("Apuestas pendientes de resolver")
-
-    pendientes = db.listar_surebets_pendientes()
-    if not pendientes:
-        st.info("No tienes surebets pendientes. ¡Al día!")
-        return
-
-    for surebet in pendientes:
-        patas = db.listar_patas(surebet["id"])
-        with st.expander(
-            f"{surebet['fecha']} · {surebet['evento']} · {surebet['mercado']} "
-            f"(objetivo: {surebet['beneficio_esperado_importe']:.2f} €)",
-            key=f"expander_pendiente_{surebet['id']}",
-            on_change="rerun",
-        ):
-            resultados_seleccionados = {}
-            importes_cierre_seleccionados = {}
-            opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
-            for pata in patas:
-                with st.container(border=True):
-                    st.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}")
-                    st.caption(f"Cuota {pata['cuota']:.2f} · Importe apostado {pata['importe']:.2f} €")
-                    c1, c2 = st.columns(2)
-                    resultado_sel = c1.selectbox(
-                        "Resultado",
-                        options=opciones_resultado,
-                        index=opciones_resultado.index(pata["resultado"]),
-                        key=f"resultado_pata_{pata['id']}",
-                    )
-                    resultados_seleccionados[pata["id"]] = resultado_sel
-                    if resultado_sel == "cerrada":
-                        importes_cierre_seleccionados[pata["id"]] = c2.number_input(
-                            "Importe de cierre (€)",
-                            min_value=0.0,
-                            step=1.0,
-                            format="%.2f",
-                            value=float(pata["importe_cierre"] or 0.0),
-                            key=f"importe_cierre_pata_{pata['id']}",
-                        )
-                    else:
-                        importes_cierre_seleccionados[pata["id"]] = None
-
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("✅ Guardar y cerrar", key=f"cerrar_{surebet['id']}", use_container_width=True):
-                    if any(r == "pendiente" for r in resultados_seleccionados.values()):
-                        st.error("Marca el resultado de todas las patas antes de cerrar la surebet.")
-                    else:
-                        for pata_id, resultado in resultados_seleccionados.items():
-                            db.actualizar_resultado_pata(
-                                pata_id, resultado, importes_cierre_seleccionados[pata_id]
-                            )
-                        datos = [
-                            (
-                                p["importe"],
-                                p["cuota"],
-                                resultados_seleccionados[p["id"]],
-                                importes_cierre_seleccionados[p["id"]],
-                            )
-                            for p in patas
-                        ]
-                        beneficio_real = calcular_resultado_real(datos, surebet["importe_total"])
-                        db.cerrar_surebet(surebet["id"], beneficio_real)
-                        st.success(f"Surebet cerrada. Beneficio real: {beneficio_real:.2f} €")
-                        st.rerun()
-            with col_b:
-                if st.button("🗑️ Eliminar surebet", key=f"eliminar_{surebet['id']}", use_container_width=True):
-                    db.eliminar_surebet(surebet["id"])
-                    st.rerun()
 
 
 def render():
     _init_state()
     _formulario_nueva_surebet()
-    st.markdown("---")
-    _resolver_pendientes()
