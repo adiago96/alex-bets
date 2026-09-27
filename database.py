@@ -128,6 +128,7 @@ def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct,
         )
         listar_surebets_pendientes.clear()
         obtener_todo_dataframe.clear()
+        listar_nombres_casas.clear()
         return surebet_id
 
 
@@ -171,6 +172,7 @@ def eliminar_surebet(surebet_id):
     listar_surebets_pendientes.clear()
     listar_patas.clear()
     obtener_todo_dataframe.clear()
+    listar_nombres_casas.clear()
 
 
 def guardar_bankroll(casa_apuestas, liquido, pendiente):
@@ -188,6 +190,7 @@ def guardar_bankroll(casa_apuestas, liquido, pendiente):
             (casa_apuestas, liquido, pendiente, _ahora()),
         )
     listar_bankroll.clear()
+    listar_nombres_casas.clear()
 
 
 @st.cache_data(ttl=15)
@@ -201,6 +204,22 @@ def eliminar_bankroll_casa(casa_apuestas):
     with get_conn() as cur:
         cur.execute("DELETE FROM bankroll_casas WHERE casa_apuestas = %s", (casa_apuestas,))
     listar_bankroll.clear()
+    listar_nombres_casas.clear()
+
+
+@st.cache_data(ttl=15)
+def listar_nombres_casas():
+    """Todas las casas de apuestas conocidas por la app: las que ya tienen
+    líquido/en juego en el Bankroll y las que aparecen en el historial de
+    apuestas, aunque todavía no se hayan añadido al Bankroll. Así, la primera
+    vez que usas una casa nueva en 'Registrar apuesta' (con 'Otra...'), la
+    próxima vez ya aparece en la lista sin tener que volver a escribirla."""
+    with get_conn() as cur:
+        cur.execute("SELECT DISTINCT casa_apuestas FROM patas")
+        de_patas = {f["casa_apuestas"] for f in cur.fetchall()}
+        cur.execute("SELECT casa_apuestas FROM bankroll_casas")
+        de_bankroll = {f["casa_apuestas"] for f in cur.fetchall()}
+    return sorted(de_patas | de_bankroll)
 
 
 @st.cache_data(ttl=20)

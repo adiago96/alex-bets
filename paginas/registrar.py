@@ -15,11 +15,6 @@ from calculos import (
     calcular_sugerencia_agrupada,
 )
 
-CASAS_HABITUALES = [
-    "Bet365", "Bwin", "Betfair", "William Hill", "Codere",
-    "Marathonbet", "Pinnacle", "Betsson", "Winamax", "Luckia", "LeoVegas",
-]
-
 DEPORTES_HABITUALES = [
     "Fútbol",
     "Baloncesto",
@@ -184,6 +179,8 @@ def _formulario_nueva_surebet():
 
     st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
 
+    casas_conocidas = db.listar_nombres_casas()
+
     for i, pata in enumerate(st.session_state.patas_temp):
         with st.container(border=True):
             st.caption(f"Pata #{i + 1}")
@@ -191,12 +188,12 @@ def _formulario_nueva_surebet():
             with c1:
                 pata["casa_apuestas"] = st.selectbox(
                     f"Casa de apuestas #{i + 1}",
-                    options=[""] + CASAS_HABITUALES + ["Otra..."],
+                    options=[""] + casas_conocidas + ["Otra..."],
                     index=0,
                     key=f"casa_{i}",
                 )
                 if pata["casa_apuestas"] == "Otra...":
-                    pata["casa_apuestas"] = st.text_input("Nombre de la casa", key=f"casa_otra_{i}")
+                    pata["casa_apuestas"] = st.text_input("Nombre de la casa", key=f"casa_otra_{i}").strip()
             with c2:
                 if mercado in MERCADOS_CON_LINEA:
                     sub1, sub2 = st.columns([1, 1])
@@ -292,7 +289,7 @@ def _formulario_nueva_surebet():
     if st.button("💾 Guardar surebet", type="primary", disabled=not confirmar_riesgo or importe_total <= 0):
         patas_guardar = [
             {
-                "casa_apuestas": p["casa_apuestas"],
+                "casa_apuestas": p["casa_apuestas"].strip(),
                 "seleccion": p["seleccion"],
                 "cuota": p["cuota"],
                 "importe": p["importe"],
