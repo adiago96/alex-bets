@@ -1,6 +1,7 @@
 # paginas/registrar.py
 """Pestaña de registro de nuevas surebets (ver 'pendientes.py' para resolverlas)."""
 
+import unicodedata
 from datetime import date, datetime
 
 import pandas as pd
@@ -30,61 +31,74 @@ DEPORTES_HABITUALES = [
     "Esports",
 ]
 
-# Mercados típicos por deporte (para no ofrecer p.ej. "Over/Under goles" al
-# registrar un partido de baloncesto). Si el deporte es "Otro..." o no está en
-# esta lista, se ofrecen todos los mercados conocidos.
+# Mercados por deporte. Son categorías genéricas a propósito: "Over/Under"
+# vale igual para goles, córners, tarjetas, puntos o recepciones de un
+# jugador, y "Hándicap" para cualquier hándicap (asiático, europeo, de goles,
+# de córners...). Así el registro es más rápido y el historial no se llena de
+# subdivisiones. Si el deporte es "Otro..." o no está en esta lista, se
+# ofrecen todos los mercados.
+_MERCADOS_DUELO = ["Ganador", "Over/Under", "Hándicap"]
+_MERCADOS_CON_EMPATE = ["1X2", "Doble oportunidad", "Over/Under", "Hándicap"]
 MERCADOS_POR_DEPORTE = {
-    "Fútbol": [
-        "1X2", "Doble oportunidad", "Over/Under goles", "Ambos marcan (BTTS)",
-        "Hándicap asiático", "Hándicap europeo", "Córners", "Tarjetas",
-    ],
-    "Fútbol Americano": ["Ganador del partido/set", "Over/Under puntos", "Hándicap de puntos"],
-    "Baloncesto": ["Ganador del partido/set", "Over/Under puntos", "Hándicap de puntos"],
-    "Tenis": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under juegos"],
-    "Voleibol": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under puntos"],
-    "Balonmano": [
-        "1X2", "Doble oportunidad", "Over/Under goles", "Ambos marcan (BTTS)", "Hándicap de goles",
-    ],
-    "Tenis de mesa": ["Ganador del partido/set", "Hándicap de sets/juegos", "Over/Under puntos"],
-    "Béisbol": ["Ganador del partido/set", "Over/Under carreras", "Hándicap de carreras (Run Line)"],
-    "Hockey hielo": ["1X2", "Doble oportunidad", "Over/Under goles", "Hándicap de goles"],
-    "Rugby": ["1X2", "Doble oportunidad", "Over/Under puntos", "Hándicap de puntos"],
-    "Boxeo/MMA": ["Ganador del combate", "Over/Under asaltos", "Irá a decisión"],
-    "Fórmula 1/Motor": ["Ganador de la carrera", "Podio", "Ganador de la clasificación", "Vuelta rápida"],
-    "Esports": ["Ganador del partido/set", "Over/Under mapas", "Hándicap de mapas"],
+    "Fútbol": _MERCADOS_CON_EMPATE + ["Ambos marcan (BTTS)"],
+    "Fútbol Americano": _MERCADOS_DUELO,
+    "Baloncesto": _MERCADOS_DUELO,
+    "Tenis": _MERCADOS_DUELO,
+    "Voleibol": _MERCADOS_DUELO,
+    "Balonmano": _MERCADOS_CON_EMPATE,
+    "Tenis de mesa": _MERCADOS_DUELO,
+    "Béisbol": _MERCADOS_DUELO,
+    "Hockey hielo": _MERCADOS_CON_EMPATE,
+    "Rugby": _MERCADOS_CON_EMPATE,
+    "Boxeo/MMA": ["Ganador", "Over/Under", "Irá a decisión"],
+    "Fórmula 1/Motor": ["Ganador", "Podio"],
+    "Esports": _MERCADOS_DUELO,
 }
 
 # Todos los mercados conocidos, para cuando el deporte no está en la lista de
 # arriba (p.ej. se escribió a mano en "Otro...").
-MERCADOS_HABITUALES = sorted({m for mercados in MERCADOS_POR_DEPORTE.values() for m in mercados})
+MERCADOS_HABITUALES = list(dict.fromkeys(m for mercados in MERCADOS_POR_DEPORTE.values() for m in mercados))
 
-# Mercados donde la selección es "Más de X" / "Menos de X" con una línea numérica.
-MERCADOS_CON_LINEA = [
-    "Over/Under goles", "Córners", "Tarjetas", "Over/Under puntos",
-    "Over/Under juegos", "Over/Under carreras", "Over/Under asaltos", "Over/Under mapas",
-]
+# Mercado donde la selección es "Más de X" / "Menos de X" con una línea numérica.
+MERCADO_CON_LINEA = "Over/Under"
 
-# Mercados de hándicap: la selección es un lado + el valor del hándicap (puede
+# Mercado de hándicap: la selección es un lado + el valor del hándicap (puede
 # ser distinto en cada casa, p.ej. -4.5 en una y +3.5 en otra para jugar una middle).
-MERCADOS_CON_HANDICAP = {
-    "Hándicap asiático": ["Local", "Visitante"],
-    "Hándicap europeo": ["Local", "Empate", "Visitante"],
-    "Hándicap de sets/juegos": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
-    "Hándicap de puntos": ["Local", "Visitante"],
-    "Hándicap de goles": ["Local", "Visitante"],
-    "Hándicap de carreras (Run Line)": ["Local", "Visitante"],
-    "Hándicap de mapas": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
+MERCADO_CON_HANDICAP = "Hándicap"
+
+# Cómo se llaman los dos lados de un enfrentamiento según el deporte (para
+# "Ganador" y "Hándicap"). En fútbol el hándicap admite también "Empate" por
+# el hándicap europeo.
+_LADOS_POR_DEPORTE = {
+    "Tenis": ["Jugador 1", "Jugador 2"],
+    "Tenis de mesa": ["Jugador 1", "Jugador 2"],
+    "Boxeo/MMA": ["Peleador 1", "Peleador 2"],
+    "Esports": ["Equipo 1", "Equipo 2"],
 }
+_LADOS_POR_DEFECTO = ["Local", "Visitante"]
+
+
+def _lados(deporte, mercado):
+    lados = _LADOS_POR_DEPORTE.get(deporte, _LADOS_POR_DEFECTO)
+    if mercado == MERCADO_CON_HANDICAP and deporte == "Fútbol":
+        return ["Local", "Empate", "Visitante"]
+    return lados
+
 
 # Selecciones habituales para el resto de mercados con opciones cerradas.
 SELECCIONES_POR_MERCADO = {
     "1X2": ["Local", "Empate", "Visitante"],
     "Doble oportunidad": ["Local o Empate", "Local o Visitante", "Empate o Visitante"],
     "Ambos marcan (BTTS)": ["Sí", "No"],
-    "Ganador del partido/set": ["Jugador/Equipo 1", "Jugador/Equipo 2"],
-    "Ganador del combate": ["Peleador 1", "Peleador 2"],
     "Irá a decisión": ["Sí", "No"],
 }
+
+
+def _selecciones_cerradas(deporte, mercado):
+    if mercado == "Ganador" and deporte != "Fórmula 1/Motor":
+        return _lados(deporte, mercado)
+    return SELECCIONES_POR_MERCADO.get(mercado)
+
 
 # Prefijos de las claves de session_state que dependen del mercado elegido:
 # hay que limpiarlas cuando cambia el deporte o el mercado para que no se
@@ -94,6 +108,21 @@ _PREFIJOS_SELECCION_PATA = [
     "seleccion_lado_", "seleccion_handicap_", "seleccion_select_", "seleccion_otra_",
 ]
 
+
+
+def _sin_acentos(texto: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn").lower()
+
+
+def _normalizar_deporte(texto: str) -> str:
+    """Quita espacios sobrantes y, si coincide con un deporte habitual salvo
+    tildes o mayúsculas ('futbol americano'), devuelve el nombre de la lista,
+    para no acabar con el mismo deporte escrito de varias formas."""
+    texto = " ".join(texto.split())
+    for habitual in DEPORTES_HABITUALES:
+        if _sin_acentos(habitual) == _sin_acentos(texto):
+            return habitual
+    return texto
 
 def _init_state():
     if "patas_temp" not in st.session_state:
@@ -202,7 +231,7 @@ def _formulario_nueva_surebet():
             key=_clave("deporte_select"),
         )
         if deporte == "Otro...":
-            deporte = st.text_input("Nombre del deporte", key=_clave("deporte_otro"))
+            deporte = _normalizar_deporte(st.text_input("Nombre del deporte", key=_clave("deporte_otro")))
         evento = st.text_input(
             "Evento", placeholder="Ej. Real Madrid vs Barcelona", key=_clave("evento_nueva_surebet")
         )
@@ -225,7 +254,7 @@ def _formulario_nueva_surebet():
             key=_clave("mercado_select"),
         )
         if mercado == "Otro...":
-            mercado = st.text_input("Nombre del mercado", key=_clave("mercado_otro"))
+            mercado = " ".join(st.text_input("Nombre del mercado", key=_clave("mercado_otro")).split())
 
         # Igual que con el deporte: si el mercado cambia, las selecciones ya
         # elegidas en cada pata (ligadas a las opciones del mercado anterior)
@@ -339,7 +368,7 @@ def _formulario_nueva_surebet():
                 if pata["casa_apuestas"] in liquido_por_casa:
                     st.caption(f"Líquido disponible: {liquido_por_casa[pata['casa_apuestas']]:,.2f} €")
             with c2:
-                if mercado in MERCADOS_CON_LINEA:
+                if mercado == MERCADO_CON_LINEA:
                     sub1, sub2 = st.columns([1, 1])
                     tipo_linea = sub1.selectbox(
                         f"Tipo #{i + 1}", options=["Más de", "Menos de"], key=_clave(f"seleccion_tipo_{i}")
@@ -349,18 +378,18 @@ def _formulario_nueva_surebet():
                         key=_clave(f"seleccion_linea_{i}"),
                     )
                     pata["seleccion"] = f"{tipo_linea} {linea:g}"
-                elif mercado in MERCADOS_CON_HANDICAP:
+                elif mercado == MERCADO_CON_HANDICAP:
                     sub1, sub2 = st.columns([1, 1])
                     lado = sub1.selectbox(
-                        f"Lado #{i + 1}", options=MERCADOS_CON_HANDICAP[mercado],
+                        f"Lado #{i + 1}", options=_lados(deporte, mercado),
                         key=_clave(f"seleccion_lado_{i}"),
                     )
                     linea = sub2.number_input(
                         f"Hándicap #{i + 1}", step=0.25, format="%.2f", key=_clave(f"seleccion_handicap_{i}")
                     )
                     pata["seleccion"] = f"{lado} {linea:+g}"
-                elif mercado in SELECCIONES_POR_MERCADO:
-                    opciones = SELECCIONES_POR_MERCADO[mercado] + ["Otra..."]
+                elif _selecciones_cerradas(deporte, mercado):
+                    opciones = _selecciones_cerradas(deporte, mercado) + ["Otra..."]
                     seleccionada = st.selectbox(
                         f"Selección #{i + 1}", options=opciones, key=_clave(f"seleccion_select_{i}")
                     )
