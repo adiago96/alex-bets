@@ -14,17 +14,23 @@ def _cargar_datos():
     return surebets, patas
 
 
+TODOS = "Todos"
+
+
+def _opciones(serie: pd.Series) -> list:
+    return [TODOS] + sorted(v for v in serie.dropna().unique() if str(v).strip())
+
+
 def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
     col1, col2, col3, col4 = st.columns(4)
-    estados = col1.multiselect(
-        "Estado", options=["pendiente", "resuelta"], default=["resuelta"], key="hist_estado"
+    estado_sel = col1.selectbox(
+        "Estado", options=[TODOS, "pendiente", "resuelta"], index=2, key="hist_estado_sel",
+        format_func=lambda v: v.capitalize(),
     )
-    deportes = sorted(surebets["deporte"].unique()) if not surebets.empty else []
-    deportes_sel = col2.multiselect("Deporte", options=deportes, default=deportes, key="hist_deporte")
-    mercados = sorted(surebets["mercado"].unique()) if not surebets.empty else []
-    mercados_sel = col3.multiselect("Mercado", options=mercados, default=mercados, key="hist_mercado")
-    casas = sorted(patas["casa_apuestas"].unique()) if not patas.empty else []
-    casas_sel = col4.multiselect("Casa de apuestas", options=casas, default=casas, key="hist_casa")
+    deporte_sel = col2.selectbox("Deporte", options=_opciones(surebets["deporte"]), key="hist_deporte_sel")
+    mercado_sel = col3.selectbox("Mercado", options=_opciones(surebets["mercado"]), key="hist_mercado_sel")
+    casas = _opciones(patas["casa_apuestas"]) if not patas.empty else [TODOS]
+    casa_sel = col4.selectbox("Casa de apuestas", options=casas, key="hist_casa_sel")
 
     if not surebets.empty:
         fecha_min = surebets["fecha"].min().date()
@@ -41,15 +47,18 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
 
     df = surebets.copy()
     if not df.empty:
-        df = df[df["estado"].isin(estados)]
-        df = df[df["deporte"].isin(deportes_sel)]
-        df = df[df["mercado"].isin(mercados_sel)]
+        if estado_sel != TODOS:
+            df = df[df["estado"] == estado_sel]
+        if deporte_sel != TODOS:
+            df = df[df["deporte"] == deporte_sel]
+        if mercado_sel != TODOS:
+            df = df[df["mercado"] == mercado_sel]
         if rango_fechas and len(rango_fechas) == 2:
             inicio, fin = rango_fechas
             df = df[(df["fecha"].dt.date >= inicio) & (df["fecha"].dt.date <= fin)]
 
-    ids_por_casa = set(patas[patas["casa_apuestas"].isin(casas_sel)]["surebet_id"]) if not patas.empty else set()
-    if casas_sel:
+    if casa_sel != TODOS:
+        ids_por_casa = set(patas[patas["casa_apuestas"] == casa_sel]["surebet_id"])
         df = df[df["id"].isin(ids_por_casa)]
 
     patas_filtradas = patas[patas["surebet_id"].isin(df["id"])] if not patas.empty else patas
