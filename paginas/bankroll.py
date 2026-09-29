@@ -1,13 +1,17 @@
 # paginas/bankroll.py
 """Pestaña de bankroll: líquido y dinero en juego por casa de apuestas.
 
-El líquido de cada casa se mueve principalmente con los depósitos y
-retiradas que registres en la sección de arriba: un depósito lo sube, una
-retirada lo baja, al momento. El importe en juego (dinero metido en apuestas
-abiertas) no se calcula solo -no todo el historial de patas está siempre al
-día-, así que ambos campos se pueden corregir a mano en cualquier momento con
-el botón "✏️" de cada tarjeta, sin que estén editándose todo el rato en
-pantalla.
+El líquido y el importe en juego de cada casa se mueven solos:
+- depósito / retirada: sube / baja el líquido.
+- registrar una apuesta: el importe de cada pata pasa del líquido a en juego.
+- resolverla: el importe sale de en juego y entra en el líquido lo que
+  devuelve la casa (ganada: importe x cuota; anulada: el importe; cerrada: el
+  importe de cierre; perdida: nada).
+- eliminar una pendiente o reabrir una resuelta deshace lo anterior.
+
+Aun así, ambos campos se pueden cuadrar a mano con lo que marque la casa de
+verdad con el botón "✏️" de cada tarjeta. Cada tarjeta avisa si 'en juego' no
+coincide con lo apostado en las surebets pendientes de esa casa.
 """
 
 from datetime import date
@@ -85,9 +89,10 @@ def _formulario_movimiento(nombres_casas):
             st.rerun()
 
 
-def _tarjeta_casa(casa, totales_movimientos):
+def _tarjeta_casa(casa, totales_movimientos, pendientes_por_casa):
     nombre = casa["casa_apuestas"]
     dep, ret = totales_movimientos.get(nombre, (0.0, 0.0))
+    en_pendientes = pendientes_por_casa.get(nombre, 0.0)
     clave_editando = f"bankroll_editando_{nombre}"
     editando = st.session_state.get(clave_editando, False)
 
@@ -111,6 +116,7 @@ def _tarjeta_casa(casa, totales_movimientos):
                     "En juego (€)", value=float(casa["pendiente"]), step=1.0,
                     key=f"pen_{nombre}_{casa['pendiente']:.2f}",
                 )
+                st.caption(f"Apostado en surebets pendientes de esta casa: {en_pendientes:,.2f} €")
                 col_g, col_c = st.columns(2)
                 guardar = col_g.form_submit_button("Guardar", use_container_width=True)
                 cancelar = col_c.form_submit_button("Cancelar", use_container_width=True)
@@ -126,7 +132,15 @@ def _tarjeta_casa(casa, totales_movimientos):
             m1.metric("Líquido", f"{casa['liquido']:,.2f} €")
             m2.metric("En juego", f"{casa['pendiente']:,.2f} €")
             m3.metric("Saldo total", f"{casa['liquido'] + casa['pendiente']:,.2f} €")
-            st.caption(f"Depositado: {dep:,.2f} € · Retirado: {ret:,.2f} €")
+            st.caption(
+                f"Depositado: {dep:,.2f} € · Retirado: {ret:,.2f} € · "
+                f"En surebets pendientes: {en_pendientes:,.2f} €"
+            )
+            if abs(casa["pendiente"] - en_pendientes) > 0.005:
+                st.warning(
+                    f"'En juego' ({casa['pendiente']:,.2f} €) no cuadra con lo apostado en las surebets "
+                    f"pendientes ({en_pendientes:,.2f} €). Corrígelo con ✏️ si la casa marca otra cosa."
+                )
 
 
 def _historial_movimientos(movimientos, nombres_casas):
@@ -183,6 +197,7 @@ def render():
 
     casas = db.listar_bankroll()
     movimientos = db.listar_movimientos_bankroll()
+    pendientes_por_casa = db.importes_pendientes_por_casa()
     nombres_existentes = [c["casa_apuestas"] for c in casas]
 
     if not casas:
@@ -208,7 +223,7 @@ def render():
         columnas = st.columns(2)
         for i, casa in enumerate(casas):
             with columnas[i % 2]:
-                _tarjeta_casa(casa, totales_movimientos)
+                _tarjeta_casa(casa, totales_movimientos, pendientes_por_casa)
 
         st.markdown("---")
         _historial_movimientos(movimientos, nombres_existentes)

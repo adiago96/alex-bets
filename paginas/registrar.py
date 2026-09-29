@@ -125,6 +125,61 @@ def _limpiar_selecciones_patas():
             st.session_state.pop(_clave(f"{prefijo}{i}"), None)
 
 
+def _casas_en_negativo(casas):
+    """De las casas indicadas, las que tienen el líquido en negativo, con lo
+    que les falta para volver a cero."""
+    return {
+        c["casa_apuestas"]: round(-c["liquido"], 2)
+        for c in db.listar_bankroll()
+        if c["casa_apuestas"] in casas and c["liquido"] < -0.005
+    }
+
+
+def _descartar_deposito():
+    st.session_state.pop("depositos_pendientes", None)
+
+
+@st.dialog("💰 Falta líquido", on_dismiss=_descartar_deposito)
+def _dialogo_deposito(faltantes):
+    """Ventana que salta al guardar una surebet que deja en negativo el
+    líquido de alguna casa, para registrar el depósito hecho para cubrirla.
+    Viene rellena con la casa, lo que falta y la fecha de hoy, pero todo se
+    puede cambiar."""
+    st.write("Con esta apuesta el líquido ha quedado en negativo en:")
+    for casa, falta in faltantes.items():
+        st.markdown(f"- **{casa}**: {-falta:,.2f} €")
+    st.caption("Registra el depósito que has hecho para cubrirla. Puedes cambiar la casa, el importe y la fecha.")
+
+    nombres = [c["casa_apuestas"] for c in db.listar_bankroll()]
+    primera = next(iter(faltantes))
+    # Las keys llevan la casa con la que se abre la ventana: si vuelve a salir
+    # para la siguiente casa en negativo, los campos nacen de cero con ella
+    # en vez de conservar lo elegido para la anterior.
+    casa = st.selectbox(
+        "Casa", options=nombres, index=nombres.index(primera), key=f"deposito_dialogo_casa_{primera}"
+    )
+    importe = st.number_input(
+        "Importe (€)", min_value=0.01, step=1.0, format="%.2f",
+        value=max(faltantes.get(casa, 0.0), 0.01), key=f"deposito_dialogo_importe_{primera}_{casa}",
+    )
+    fecha = st.date_input("Fecha", value=date.today(), key=f"deposito_dialogo_fecha_{primera}")
+
+    col_si, col_no = st.columns(2)
+    if col_si.button("Registrar depósito", type="primary", use_container_width=True):
+        db.registrar_movimiento_bankroll(casa, "deposito", importe, fecha.isoformat())
+        # Si había más de una casa en negativo, la ventana vuelve a salir
+        # con la siguiente.
+        restantes = _casas_en_negativo(faltantes.keys())
+        if restantes:
+            st.session_state["depositos_pendientes"] = restantes
+        else:
+            _descartar_deposito()
+        st.rerun()
+    if col_no.button("Ahora no", use_container_width=True):
+        _descartar_deposito()
+        st.rerun()
+
+
 def _formulario_nueva_surebet():
     st.subheader("Nueva surebet")
 
@@ -264,6 +319,7 @@ def _formulario_nueva_surebet():
     st.markdown("**Patas de la surebet** (una fila por casa de apuestas)")
 
     casas_conocidas = db.listar_nombres_casas()
+    liquido_por_casa = {c["casa_apuestas"]: c["liquido"] for c in db.listar_bankroll()}
 
     for i, pata in enumerate(st.session_state.patas_temp):
         with st.container(border=True):
@@ -280,6 +336,8 @@ def _formulario_nueva_surebet():
                     pata["casa_apuestas"] = st.text_input(
                         "Nombre de la casa", key=_clave(f"casa_otra_{i}")
                     ).strip()
+                if pata["casa_apuestas"] in liquido_por_casa:
+                    st.caption(f"Líquido disponible: {liquido_por_casa[pata['casa_apuestas']]:,.2f} €")
             with c2:
                 if mercado in MERCADOS_CON_LINEA:
                     sub1, sub2 = st.columns([1, 1])
@@ -406,6 +464,12 @@ def _formulario_nueva_surebet():
                 notas=notas,
                 patas=patas_guardar,
             )
+            # El importe de cada pata ha pasado de líquido a 'en juego': si
+            # alguna casa se ha quedado en negativo, se ofrece registrar el
+            # depósito nada más volver a dibujar la página.
+            faltantes = _casas_en_negativo({p["casa_apuestas"] for p in patas_guardar})
+            if faltantes:
+                st.session_state["depositos_pendientes"] = faltantes
             st.session_state.form_version += 1
             st.session_state.patas_temp = [
                 {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
@@ -419,4 +483,10 @@ def _formulario_nueva_surebet():
 
 def render():
     _init_state()
+    # La ventana sigue saliendo mientras quede alguna casa en negativo por la
+    # última apuesta guardada, hasta registrar el depósito, pulsar "Ahora no"
+    # o cerrarla (con la X, Esc o haciendo clic fuera: on_dismiss).
+    faltantes = st.session_state.get("depositos_pendientes")
+    if faltantes:
+        _dialogo_deposito(faltantes)
     _formulario_nueva_surebet()

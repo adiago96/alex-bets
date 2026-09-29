@@ -118,7 +118,8 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
                 if st.button(
                     "↩️ Reabrir (volver a pendiente)",
                     key=f"reabrir_{surebet['id']}",
-                    help="Pon el resultado de cada pata otra vez en pendiente para corregirlo desde 'Registrar apuesta'.",
+                    help="Pon el resultado de cada pata otra vez en pendiente para corregirlo desde "
+                    "'Pendientes'. Deshace también lo que movió en el bankroll al resolverla.",
                 ):
                     db.reabrir_surebet(surebet["id"])
                     st.success("Surebet reabierta. Ya puedes corregirla en 'Registrar apuesta'.")

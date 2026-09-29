@@ -65,7 +65,11 @@ def render():
         st.info("No tienes surebets pendientes. ¡Al día!")
         return
 
-    st.caption("Ordenadas por fecha y hora del evento, las más recientes arriba.")
+    st.caption(
+        "Ordenadas por fecha y hora del evento, las más recientes arriba. Al guardar y cerrar, el "
+        "importe de cada pata sale de 'en juego' y entra en el líquido de su casa lo que devuelve: "
+        "ganada → importe × cuota, anulada → el importe, cerrada → el importe de cierre, perdida → nada."
+    )
 
     for surebet in pendientes:
         patas = db.listar_patas(surebet["id"])
@@ -128,6 +132,12 @@ def render():
                         st.success(f"Surebet cerrada. Beneficio real: {beneficio_real:.2f} €")
                         st.rerun()
             with col_b:
-                if st.button("🗑️ Eliminar surebet", key=f"eliminar_{surebet['id']}", use_container_width=True):
+                if st.button(
+                    "🗑️ Eliminar surebet",
+                    key=f"eliminar_{surebet['id']}",
+                    use_container_width=True,
+                    help="Para una apuesta que no llegaste a hacer: el importe de cada pata sale de "
+                    "'en juego' y vuelve al líquido de su casa.",
+                ):
                     db.eliminar_surebet(surebet["id"])
                     st.rerun()
