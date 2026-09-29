@@ -1,7 +1,7 @@
 # paginas/registrar.py
 """Pestaña de registro de nuevas surebets (ver 'pendientes.py' para resolverlas)."""
 
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -130,7 +130,16 @@ def _formulario_nueva_surebet():
 
     col_a, col_b = st.columns(2)
     with col_a:
-        fecha = st.date_input("Fecha", value=date.today(), key=_clave("fecha_nueva_surebet"))
+        fecha = st.date_input("Fecha de la apuesta", value=date.today(), key=_clave("fecha_nueva_surebet"))
+        col_fecha_ev, col_hora_ev = st.columns(2)
+        fecha_evento = col_fecha_ev.date_input(
+            "Fecha del evento", value=date.today(), key=_clave("fecha_evento_nueva_surebet")
+        )
+        # Sin valor por defecto: obliga a escribir la hora real del partido en
+        # vez de guardar sin darse cuenta una hora inventada.
+        hora_evento = col_hora_ev.time_input(
+            "Hora del evento", value=None, step=300, key=_clave("hora_evento_nueva_surebet")
+        )
         deporte = st.selectbox(
             "Deporte",
             options=[""] + DEPORTES_HABITUALES + ["Otro..."],
@@ -382,9 +391,12 @@ def _formulario_nueva_surebet():
             st.error("Todas las patas necesitan un importe a apostar mayor que 0.")
         elif not evento or not mercado or not deporte:
             st.error("Deporte, evento y mercado son obligatorios.")
+        elif hora_evento is None:
+            st.error("Indica la hora del evento.")
         else:
             db.crear_surebet(
                 fecha=fecha.isoformat(),
+                fecha_evento=datetime.combine(fecha_evento, hora_evento).strftime("%Y-%m-%d %H:%M"),
                 evento=evento,
                 deporte=deporte,
                 mercado=mercado,

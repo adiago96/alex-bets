@@ -20,6 +20,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS surebets (
     id SERIAL PRIMARY KEY,
     fecha TEXT NOT NULL,
+    fecha_evento TEXT,  -- 'YYYY-MM-DD HH:MM' en que se juega el partido (NULL en las antiguas)
     evento TEXT NOT NULL,
     deporte TEXT NOT NULL DEFAULT '',
     mercado TEXT NOT NULL,
@@ -31,6 +32,9 @@ CREATE TABLE IF NOT EXISTS surebets (
     notas TEXT,
     creado_en TEXT NOT NULL
 );
+
+-- Las bases de datos creadas antes de existir la columna no la tienen.
+ALTER TABLE surebets ADD COLUMN IF NOT EXISTS fecha_evento TEXT;
 
 CREATE TABLE IF NOT EXISTS patas (
     id SERIAL PRIMARY KEY,
@@ -122,16 +126,22 @@ def init_db():
         cur.execute(SCHEMA)
 
 
-def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas, patas):
-    """Crea una surebet junto con sus patas. `patas` es una lista de dicts
-    con claves: casa_apuestas, seleccion, cuota, importe."""
+def crear_surebet(
+    fecha, fecha_evento, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas, patas
+):
+    """Crea una surebet junto con sus patas. `fecha_evento` es la fecha y hora
+    del partido ('YYYY-MM-DD HH:MM'). `patas` es una lista de dicts con claves:
+    casa_apuestas, seleccion, cuota, importe."""
     with get_conn() as cur:
         cur.execute(
             """INSERT INTO surebets
-               (fecha, evento, deporte, mercado, importe_total, beneficio_esperado_pct,
+               (fecha, fecha_evento, evento, deporte, mercado, importe_total, beneficio_esperado_pct,
                 beneficio_esperado_importe, notas, creado_en)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (fecha, evento, deporte, mercado, importe_total, beneficio_pct, beneficio_importe, notas, _ahora()),
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (
+                fecha, fecha_evento, evento, deporte, mercado, importe_total, beneficio_pct,
+                beneficio_importe, notas, _ahora(),
+            ),
         )
         surebet_id = cur.fetchone()["id"]
         cur.executemany(
@@ -147,9 +157,24 @@ def crear_surebet(fecha, evento, deporte, mercado, importe_total, beneficio_pct,
 
 @st.cache_data(ttl=15)
 def listar_surebets_pendientes():
+    """Pendientes ordenadas por fecha y hora del evento, las más recientes
+    arriba. Las antiguas sin fecha de evento se ordenan por la fecha de la
+    apuesta ('YYYY-MM-DD' y 'YYYY-MM-DD HH:MM' se comparan bien como texto)."""
     with get_conn() as cur:
-        cur.execute("SELECT * FROM surebets WHERE estado = 'pendiente' ORDER BY fecha DESC, id DESC")
+        cur.execute(
+            """SELECT * FROM surebets WHERE estado = 'pendiente'
+               ORDER BY COALESCE(fecha_evento, fecha) DESC, id DESC"""
+        )
         return cur.fetchall()
+
+
+def actualizar_fecha_evento(surebet_id, fecha_evento):
+    """Fija o corrige la fecha y hora del evento ('YYYY-MM-DD HH:MM') de una
+    surebet ya guardada (p.ej. las registradas antes de existir el campo)."""
+    with get_conn() as cur:
+        cur.execute("UPDATE surebets SET fecha_evento = %s WHERE id = %s", (fecha_evento, surebet_id))
+    listar_surebets_pendientes.clear()
+    obtener_todo_dataframe.clear()
 
 
 @st.cache_data(ttl=15)
@@ -330,7 +355,7 @@ def obtener_todo_dataframe():
         filas_patas = cur.fetchall()
 
     columnas_surebets = [
-        "id", "fecha", "evento", "deporte", "mercado", "importe_total",
+        "id", "fecha", "fecha_evento", "evento", "deporte", "mercado", "importe_total",
         "beneficio_esperado_pct", "beneficio_esperado_importe", "estado",
         "beneficio_real", "notas", "creado_en",
     ]

@@ -3,6 +3,8 @@
 'Registrar apuesta'; se separó para no mezclar crear apuestas nuevas con
 resolver las que ya están en juego)."""
 
+from datetime import date, datetime
+
 import streamlit as st
 
 import database as db
@@ -26,6 +28,35 @@ ICONOS_DEPORTE = {
 ICONO_POR_DEFECTO = "🏆"
 
 
+def _texto_fecha_evento(surebet):
+    """Fecha y hora del partido para la cabecera; las apuestas antiguas, sin
+    fecha de evento, muestran la fecha de la apuesta."""
+    if surebet["fecha_evento"]:
+        return datetime.strptime(surebet["fecha_evento"], "%Y-%m-%d %H:%M").strftime("🗓️ %d/%m/%Y %H:%M")
+    return f"{surebet['fecha']} (sin hora del evento)"
+
+
+def _editor_fecha_evento(surebet):
+    """Permite poner o corregir la fecha y hora del evento de una apuesta ya
+    guardada (sobre todo las registradas antes de existir el campo)."""
+    if surebet["fecha_evento"]:
+        actual = datetime.strptime(surebet["fecha_evento"], "%Y-%m-%d %H:%M")
+        fecha_defecto, hora_defecto = actual.date(), actual.time()
+    else:
+        fecha_defecto, hora_defecto = date.fromisoformat(surebet["fecha"][:10]), None
+    c1, c2, c3 = st.columns([2, 2, 2], vertical_alignment="bottom")
+    fecha_ev = c1.date_input("Fecha del evento", value=fecha_defecto, key=f"fecha_evento_{surebet['id']}")
+    hora_ev = c2.time_input("Hora del evento", value=hora_defecto, step=300, key=f"hora_evento_{surebet['id']}")
+    if c3.button("🕒 Guardar fecha y hora", key=f"guardar_fecha_evento_{surebet['id']}", use_container_width=True):
+        if hora_ev is None:
+            st.error("Indica la hora del evento.")
+        else:
+            db.actualizar_fecha_evento(
+                surebet["id"], datetime.combine(fecha_ev, hora_ev).strftime("%Y-%m-%d %H:%M")
+            )
+            st.rerun()
+
+
 def render():
     st.subheader("Apuestas pendientes de resolver")
 
@@ -34,15 +65,18 @@ def render():
         st.info("No tienes surebets pendientes. ¡Al día!")
         return
 
+    st.caption("Ordenadas por fecha y hora del evento, las más recientes arriba.")
+
     for surebet in pendientes:
         patas = db.listar_patas(surebet["id"])
         icono = ICONOS_DEPORTE.get(surebet["deporte"], ICONO_POR_DEFECTO)
         with st.expander(
-            f"{icono} {surebet['fecha']} · {surebet['evento']} · {surebet['mercado']} "
+            f"{icono} {_texto_fecha_evento(surebet)} · {surebet['evento']} · {surebet['mercado']} "
             f"(objetivo: {surebet['beneficio_esperado_importe']:.2f} €)",
             key=f"expander_pendiente_{surebet['id']}",
             on_change="rerun",
         ):
+            _editor_fecha_evento(surebet)
             resultados_seleccionados = {}
             importes_cierre_seleccionados = {}
             opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
