@@ -186,13 +186,13 @@ def crear_surebet(
 
 @st.cache_data(ttl=15)
 def listar_surebets_pendientes():
-    """Pendientes ordenadas por fecha y hora del evento, las más recientes
-    arriba. Las antiguas sin fecha de evento se ordenan por la fecha de la
-    apuesta ('YYYY-MM-DD' y 'YYYY-MM-DD HH:MM' se comparan bien como texto)."""
+    """Pendientes ordenadas por fecha y hora del evento, las más próximas
+    arriba (el siguiente partido que se juega sale el primero). Las antiguas
+    sin fecha de evento se ordenan por la fecha de la apuesta ('YYYY-MM-DD' y 'YYYY-MM-DD HH:MM' se comparan bien como texto)."""
     with get_conn() as cur:
         cur.execute(
             """SELECT * FROM surebets WHERE estado = 'pendiente'
-               ORDER BY COALESCE(fecha_evento, fecha) DESC, id DESC"""
+               ORDER BY COALESCE(fecha_evento, fecha) ASC, id ASC"""
         )
         return cur.fetchall()
 
