@@ -2,6 +2,7 @@
 """Pestaña de dashboard: totales, ROI y análisis por casa de apuestas / mercado."""
 
 import calendar as calmod
+import html
 
 import pandas as pd
 import plotly.express as px
@@ -90,14 +91,35 @@ def _kpis(df: pd.DataFrame):
     c5.metric("Resueltas / Pendientes", f"{len(resueltas)} / {len(pendientes)}")
 
 
+def _fecha_calendario(datos: pd.DataFrame) -> pd.Series:
+    """Fecha del evento; las apuestas antiguas sin ella usan la fecha de la apuesta."""
+    return pd.to_datetime(datos["fecha_evento"], format="%Y-%m-%d %H:%M", errors="coerce").fillna(datos["fecha"])
+
+
+def _detalle_dia(apuestas: pd.DataFrame) -> str:
+    """HTML con las apuestas cerradas de un día, para el recuadro al pasar el ratón."""
+    filas = ""
+    for _, apuesta in apuestas.sort_values("fecha_cal").iterrows():
+        color = COLOR_GANANCIA if apuesta["beneficio_real"] >= 0 else COLOR_PERDIDA
+        filas += (
+            f"<div class='cal-fila'>"
+            f"<div>{html.escape(str(apuesta['evento']))}"
+            f"<div class='cal-fila-mercado'>{html.escape(str(apuesta['mercado']))}</div></div>"
+            f"<div class='cal-fila-importe' style='color:{color};'>{apuesta['beneficio_real']:+,.2f} €</div>"
+            f"</div>"
+        )
+    return filas
+
+
 def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
     resueltas = df[df["estado"] == "resuelta"].copy()
     if resueltas.empty:
         st.info("Todavía no hay surebets resueltas para mostrar el calendario.")
         return
 
-    resueltas["periodo"] = resueltas["fecha"].dt.to_period("M")
-    periodos_disponibles = sorted(surebets["fecha"].dt.to_period("M").unique())
+    resueltas["fecha_cal"] = _fecha_calendario(resueltas)
+    resueltas["periodo"] = resueltas["fecha_cal"].dt.to_period("M")
+    periodos_disponibles = sorted(_fecha_calendario(surebets).dt.to_period("M").unique())
     if not periodos_disponibles:
         return
 
@@ -136,7 +158,7 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    por_dia = datos_mes.groupby(datos_mes["fecha"].dt.day).agg(
+    por_dia = datos_mes.groupby(datos_mes["fecha_cal"].dt.day).agg(
         beneficio=("beneficio_real", "sum"),
         num=("id", "count"),
     )
@@ -152,11 +174,14 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
             beneficio = por_dia.loc[dia, "beneficio"]
             num = int(por_dia.loc[dia, "num"])
             color = COLOR_GANANCIA if beneficio >= 0 else COLOR_PERDIDA
+            # Las dos últimas columnas abren el detalle hacia la izquierda para no salirse
+            lado = " cal-detalle-izq" if (primer_dia_semana + dia - 1) % 7 >= 5 else ""
             celdas_html += (
                 f"<div class='cal-celda cal-con-datos' style='background:{color};'>"
                 f"<div class='cal-dia'>{dia}</div>"
                 f"<div class='cal-badge'>{num}</div>"
                 f"<div class='cal-importe'>{beneficio:,.0f} €</div>"
+                f"<div class='cal-detalle{lado}'>{_detalle_dia(datos_mes[datos_mes['fecha_cal'].dt.day == dia])}</div>"
                 f"</div>"
             )
         else:
@@ -206,6 +231,48 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
             background: rgba(0,0,0,0.25);
             border-radius: 10px;
             padding: 0px 5px;
+        }}
+        .cal-detalle {{
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            z-index: 10;
+            min-width: 240px;
+            margin-top: 4px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            background: #262730;
+            color: white;
+            font-size: 0.75rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+        }}
+        .cal-detalle-izq {{
+            left: auto;
+            right: 0;
+        }}
+        .cal-con-datos:hover {{
+            outline: 2px solid rgba(255,255,255,0.6);
+        }}
+        .cal-con-datos:hover .cal-detalle {{
+            display: block;
+        }}
+        .cal-fila {{
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 3px 0;
+            border-top: 1px solid rgba(255,255,255,0.12);
+        }}
+        .cal-fila:first-child {{
+            border-top: none;
+        }}
+        .cal-fila-mercado {{
+            opacity: 0.65;
+        }}
+        .cal-fila-importe {{
+            font-weight: 700;
+            white-space: nowrap;
         }}
         .cal-importe {{
             position: absolute;
