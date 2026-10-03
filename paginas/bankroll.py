@@ -9,6 +9,9 @@ El líquido y el importe en juego de cada casa se mueven solos:
   importe de cierre; perdida: nada).
 - eliminar una pendiente o reabrir una resuelta deshace lo anterior.
 
+Las casas que ya no se usan se marcan como inactivas en vez de borrarse: no
+salen para elegirlas, pero sus apuestas y movimientos se conservan.
+
 Aun así, ambos campos se pueden cuadrar a mano con lo que marque la casa de
 verdad con el botón "✏️" de cada tarjeta. Cada tarjeta avisa si 'en juego' no
 coincide con lo apostado en las surebets pendientes de esa casa.
@@ -165,7 +168,7 @@ def _historial_movimientos(movimientos, nombres_casas):
                     st.rerun()
 
 
-def _formulario_nueva_casa(nombres_existentes):
+def _formulario_nueva_casa(nombres_existentes, nombres_inactivas):
     with st.expander("Añadir casa de apuestas"):
         with st.form("form_nueva_casa_bankroll", clear_on_submit=True):
             nombre = st.text_input("Nombre de la casa")
@@ -176,6 +179,8 @@ def _formulario_nueva_casa(nombres_existentes):
                 nombre = nombre.strip()
                 if not nombre:
                     st.error("Indica el nombre de la casa de apuestas.")
+                elif nombre in nombres_inactivas:
+                    st.error(f"'{nombre}' ya existe pero está inactiva; reactívala en 'Casas inactivas'.")
                 elif nombre in nombres_existentes:
                     st.error("Ya existe una casa con ese nombre; edítala con el botón ✏️.")
                 else:
@@ -184,12 +189,52 @@ def _formulario_nueva_casa(nombres_existentes):
                     st.rerun()
 
 
-def _eliminar_casa(nombres_existentes):
-    with st.expander("Eliminar una casa del bankroll"):
-        casa_a_borrar = st.selectbox("Casa", options=nombres_existentes, key="bankroll_casa_a_borrar")
-        if st.button("🗑️ Eliminar", key="bankroll_btn_eliminar"):
-            db.eliminar_bankroll_casa(casa_a_borrar)
+def _desactivar_casa(casas_por_nombre, pendientes_por_casa):
+    """Marca como inactiva una casa que ya no se usa: deja de salir para
+    elegirla, pero sus apuestas y movimientos siguen en Historial y
+    Dashboard. Se ofrecen todas las casas activas, también las que solo
+    aparecen en apuestas antiguas (p.ej. una que se borró del bankroll)."""
+    nombres = db.listar_nombres_casas()
+    if not nombres:
+        return
+    with st.expander("Desactivar una casa"):
+        st.caption(
+            "Una casa inactiva no sale para elegirla al registrar apuestas ni movimientos, pero sus "
+            "apuestas, depósitos y retiradas se conservan en Historial y Dashboard. Puedes reactivarla "
+            "cuando quieras."
+        )
+        nombre = st.selectbox("Casa", options=nombres, key="bankroll_casa_a_desactivar")
+        casa = casas_por_nombre.get(nombre)
+        saldo = (casa["liquido"] + casa["pendiente"]) if casa else 0.0
+        en_pendientes = pendientes_por_casa.get(nombre, 0.0)
+        avisos = []
+        if abs(saldo) > 0.005:
+            avisos.append(f"todavía tiene un saldo de {saldo:,.2f} €")
+        if en_pendientes > 0.005:
+            avisos.append(f"tiene {en_pendientes:,.2f} € en surebets pendientes")
+        confirmado = True
+        if avisos:
+            st.warning(f"{nombre} {' y '.join(avisos)}.")
+            confirmado = st.checkbox("Desactivarla igualmente", key=f"bankroll_confirmar_desactivar_{nombre}")
+        if st.button("🚫 Desactivar", key="bankroll_btn_desactivar", disabled=not confirmado):
+            db.desactivar_casa(nombre)
             st.rerun()
+
+
+def _casas_inactivas(inactivas):
+    if not inactivas:
+        return
+    with st.expander(f"Casas inactivas ({len(inactivas)})"):
+        for casa in inactivas:
+            nombre = casa["casa_apuestas"]
+            col_txt, col_btn = st.columns([4, 1.3], vertical_alignment="center")
+            col_txt.markdown(
+                f"{_logo_html(nombre)}**{nombre}** · Saldo {casa['liquido'] + casa['pendiente']:,.2f} €",
+                unsafe_allow_html=True,
+            )
+            if col_btn.button("↩️ Reactivar", key=f"bankroll_reactivar_{nombre}", use_container_width=True):
+                db.reactivar_casa(nombre)
+                st.rerun()
 
 
 def render():
@@ -198,19 +243,24 @@ def render():
     casas = db.listar_bankroll()
     movimientos = db.listar_movimientos_bankroll()
     pendientes_por_casa = db.importes_pendientes_por_casa()
+    # Los totales cuentan también las inactivas, para que no desaparezca
+    # dinero que pudiera quedar en ellas; tarjetas y desplegables, solo las activas.
+    activas = [c for c in casas if c["activa"]]
+    inactivas = [c for c in casas if not c["activa"]]
+    nombres_activas = [c["casa_apuestas"] for c in activas]
     nombres_existentes = [c["casa_apuestas"] for c in casas]
 
-    if not casas:
-        st.info("Todavía no hay ninguna casa. Añade la primera abajo.")
-    else:
+    if not activas:
+        st.info("Todavía no hay ninguna casa activa. Añade la primera abajo.")
+    if casas:
         _mostrar_totales(casas)
 
     st.markdown("---")
-    if nombres_existentes:
-        _formulario_movimiento(nombres_existentes)
+    if nombres_activas:
+        _formulario_movimiento(nombres_activas)
         st.markdown("---")
 
-    if casas:
+    if activas:
         totales_movimientos = {}
         for m in movimientos:
             dep, ret = totales_movimientos.get(m["casa_apuestas"], (0.0, 0.0))
@@ -221,14 +271,15 @@ def render():
             totales_movimientos[m["casa_apuestas"]] = (dep, ret)
 
         columnas = st.columns(2)
-        for i, casa in enumerate(casas):
+        for i, casa in enumerate(activas):
             with columnas[i % 2]:
                 _tarjeta_casa(casa, totales_movimientos, pendientes_por_casa)
 
         st.markdown("---")
-        _historial_movimientos(movimientos, nombres_existentes)
+    nombres_movimientos = sorted(set(nombres_existentes) | {m["casa_apuestas"] for m in movimientos})
+    _historial_movimientos(movimientos, nombres_movimientos)
 
     st.markdown("---")
-    _formulario_nueva_casa(nombres_existentes)
-    if nombres_existentes:
-        _eliminar_casa(nombres_existentes)
+    _formulario_nueva_casa(nombres_existentes, [c["casa_apuestas"] for c in inactivas])
+    _desactivar_casa({c["casa_apuestas"]: c for c in casas}, pendientes_por_casa)
+    _casas_inactivas(inactivas)

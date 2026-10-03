@@ -63,21 +63,20 @@ def _editor_casa_pata(pata):
     solo (ver db.cambiar_casa_pata)."""
     with st.popover("✏️ Cambiar casa"):
         casas = [c for c in db.listar_nombres_casas() if c != pata["casa_apuestas"]]
+        if not casas:
+            st.info("No hay otra casa activa. Añádela antes en la pestaña Bankroll.")
+            return
         nueva = st.selectbox(
-            "Nueva casa de apuestas", options=casas + ["Otra..."], key=f"nueva_casa_pata_{pata['id']}"
+            "Nueva casa de apuestas", options=casas, key=f"nueva_casa_pata_{pata['id']}",
+            help="¿No sale la casa? Añádela antes en la pestaña Bankroll.",
         )
-        if nueva == "Otra...":
-            nueva = st.text_input("Nombre de la casa", key=f"nueva_casa_otra_pata_{pata['id']}").strip()
         st.caption(
             f"Los {pata['importe']:.2f} € vuelven al líquido de {pata['casa_apuestas']} y pasan a "
             "'en juego' en la nueva casa."
         )
         if st.button("Guardar casa", key=f"guardar_casa_pata_{pata['id']}", use_container_width=True):
-            if not nueva:
-                st.error("Indica el nombre de la casa.")
-            else:
-                db.cambiar_casa_pata(pata["id"], nueva)
-                st.rerun()
+            db.cambiar_casa_pata(pata["id"], nueva)
+            st.rerun()
 
 
 def render():

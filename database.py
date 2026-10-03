@@ -59,8 +59,11 @@ CREATE TABLE IF NOT EXISTS bankroll_casas (
     casa_apuestas TEXT PRIMARY KEY,
     liquido DOUBLE PRECISION NOT NULL DEFAULT 0,
     pendiente DOUBLE PRECISION NOT NULL DEFAULT 0,
-    actualizado_en TEXT NOT NULL
+    actualizado_en TEXT NOT NULL,
+    activa BOOLEAN NOT NULL DEFAULT TRUE  -- FALSE: ya no se usa; no sale para elegir, pero su historial se conserva
 );
+
+ALTER TABLE bankroll_casas ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS movimientos_bankroll (
     id SERIAL PRIMARY KEY,
@@ -346,9 +349,30 @@ def listar_bankroll():
         return cur.fetchall()
 
 
-def eliminar_bankroll_casa(casa_apuestas):
+def desactivar_casa(casa_apuestas):
+    """Marca una casa como inactiva: deja de salir para elegirla al registrar
+    apuestas o movimientos, pero sus apuestas, depósitos y retiradas se
+    conservan y siguen contando en Historial y Dashboard. Si la casa solo
+    aparecía en apuestas antiguas (sin fila en el bankroll), se le crea una
+    a cero para poder marcarla."""
     with get_conn() as cur:
-        cur.execute("DELETE FROM bankroll_casas WHERE casa_apuestas = %s", (casa_apuestas,))
+        cur.execute(
+            """INSERT INTO bankroll_casas (casa_apuestas, liquido, pendiente, actualizado_en, activa)
+               VALUES (%s, 0, 0, %s, FALSE)
+               ON CONFLICT (casa_apuestas) DO UPDATE
+               SET activa = FALSE, actualizado_en = EXCLUDED.actualizado_en""",
+            (casa_apuestas, _ahora()),
+        )
+    listar_bankroll.clear()
+    listar_nombres_casas.clear()
+
+
+def reactivar_casa(casa_apuestas):
+    with get_conn() as cur:
+        cur.execute(
+            "UPDATE bankroll_casas SET activa = TRUE, actualizado_en = %s WHERE casa_apuestas = %s",
+            (_ahora(), casa_apuestas),
+        )
     listar_bankroll.clear()
     listar_nombres_casas.clear()
 
@@ -421,17 +445,19 @@ def eliminar_movimiento_bankroll(movimiento_id):
 
 @st.cache_data(ttl=15)
 def listar_nombres_casas():
-    """Todas las casas de apuestas conocidas por la app: las que ya tienen
+    """Las casas de apuestas activas conocidas por la app: las que ya tienen
     líquido/en juego en el Bankroll y las que aparecen en el historial de
-    apuestas, aunque todavía no se hayan añadido al Bankroll. Así, la primera
-    vez que usas una casa nueva en 'Registrar apuesta' (con 'Otra...'), la
-    próxima vez ya aparece en la lista sin tener que volver a escribirla."""
+    apuestas, aunque todavía no se hayan añadido al Bankroll (las casas nuevas
+    se dan de alta en la pestaña Bankroll).
+    Las marcadas como inactivas en el Bankroll no salen."""
     with get_conn() as cur:
         cur.execute("SELECT DISTINCT casa_apuestas FROM patas")
         de_patas = {f["casa_apuestas"] for f in cur.fetchall()}
-        cur.execute("SELECT casa_apuestas FROM bankroll_casas")
-        de_bankroll = {f["casa_apuestas"] for f in cur.fetchall()}
-    return sorted(de_patas | de_bankroll)
+        cur.execute("SELECT casa_apuestas, activa FROM bankroll_casas")
+        filas = cur.fetchall()
+    de_bankroll = {f["casa_apuestas"] for f in filas if f["activa"]}
+    inactivas = {f["casa_apuestas"] for f in filas if not f["activa"]}
+    return sorted((de_patas | de_bankroll) - inactivas)
 
 
 @st.cache_data(ttl=20)

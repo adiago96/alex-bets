@@ -365,14 +365,11 @@ def _formulario_nueva_surebet():
             with c1:
                 pata["casa_apuestas"] = st.selectbox(
                     f"Casa de apuestas #{i + 1}",
-                    options=[""] + casas_conocidas + ["Otra..."],
+                    options=[""] + casas_conocidas,
                     index=0,
                     key=_clave(f"casa_{i}"),
+                    help="¿No sale la casa? Añádela antes en la pestaña Bankroll.",
                 )
-                if pata["casa_apuestas"] == "Otra...":
-                    pata["casa_apuestas"] = st.text_input(
-                        "Nombre de la casa", key=_clave(f"casa_otra_{i}")
-                    ).strip()
                 if pata["casa_apuestas"] in liquido_por_casa:
                     st.caption(f"Líquido disponible: {liquido_por_casa[pata['casa_apuestas']]:,.2f} €")
             with c2:
