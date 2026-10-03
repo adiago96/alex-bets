@@ -274,8 +274,15 @@ def _formulario_nueva_surebet():
         if st.button("➕ Añadir pata"):
             st.session_state.patas_temp.append({"casa_apuestas": "", "seleccion": "", "cuota": 1.01})
     with col_btn2:
-        if st.button("➖ Quitar última pata") and len(st.session_state.patas_temp) > 2:
+        # Se puede bajar a una sola pata: p.ej. si una casa no te deja meter
+        # su parte y la apuesta se queda sin cubrir (y luego la cierras).
+        if st.button("➖ Quitar última pata") and len(st.session_state.patas_temp) > 1:
             st.session_state.patas_temp.pop()
+    if len(st.session_state.patas_temp) == 1:
+        st.info(
+            "Apuesta de una sola pata: no está cubierta por ninguna otra casa. Si no gana, pierdes lo "
+            "apostado (o lo que no recuperes al cerrarla)."
+        )
 
     st.markdown("---")
     st.markdown("**Sugerencia de importes** (opcional, siempre puedes escribir el importe a mano en cada pata)")
@@ -428,7 +435,10 @@ def _formulario_nueva_surebet():
     confirmar_riesgo = True
     if importe_total > 0:
         beneficios = calcular_beneficios_por_seleccion(selecciones_finales, cuotas_finales, importes)
-        peor_beneficio = min(beneficios)
+        # Si todas las patas van al mismo resultado (o solo hay una), nada
+        # cubre el caso de que no salga: el peor caso es perderlo todo.
+        sin_cubrir = len({sel or f"__{i}__" for i, sel in enumerate(selecciones_finales)}) == 1
+        peor_beneficio = -importe_total if sin_cubrir else min(beneficios)
 
         tabla = pd.DataFrame(
             {
@@ -449,10 +459,16 @@ def _formulario_nueva_surebet():
             )
         else:
             confirmar_riesgo = False
-            st.error(
-                f"🚫 ¡Cuidado! Con estos importes hay al menos un resultado en el que "
-                f"**perderías {abs(peor_beneficio):.2f} €**, no hay beneficio garantizado en todos los casos."
-            )
+            if sin_cubrir:
+                st.error(
+                    f"🚫 Apuesta sin cubrir: si gana, ganas **{max(beneficios):.2f} €**; si no, "
+                    f"**pierdes {importe_total:.2f} €**."
+                )
+            else:
+                st.error(
+                    f"🚫 ¡Cuidado! Con estos importes hay al menos un resultado en el que "
+                    f"**perderías {abs(peor_beneficio):.2f} €**, no hay beneficio garantizado en todos los casos."
+                )
             confirmar_riesgo = st.checkbox(
                 "Entiendo el riesgo y quiero guardar esta apuesta de todas formas",
                 key=_clave("confirmar_riesgo"),
