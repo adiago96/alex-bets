@@ -9,6 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 import database as db
+from calculos import resumen_por_casa
 
 COLOR_GANANCIA = "#2ecc71"
 COLOR_PERDIDA = "#e74c3c"
@@ -22,10 +23,7 @@ DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
 
 def _cargar_datos():
-    surebets, patas = db.obtener_todo_dataframe()
-    if not surebets.empty:
-        surebets["fecha"] = pd.to_datetime(surebets["fecha"])
-    return surebets, patas
+    return db.obtener_todo_dataframe()
 
 
 def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
@@ -41,14 +39,14 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
     casas_sel = st.sidebar.multiselect("Casa de apuestas", options=casas, default=casas)
 
     if not surebets.empty:
-        fecha_min = surebets["fecha"].min().date()
-        fecha_max = surebets["fecha"].max().date()
+        fecha_min = surebets["fecha_ref"].min().date()
+        fecha_max = surebets["fecha_ref"].max().date()
         rango_fechas = st.sidebar.date_input(
-            "Rango de fechas", value=(fecha_min, fecha_max), min_value=fecha_min, max_value=fecha_max
+            "Rango de fechas (del evento)", value=(fecha_min, fecha_max), min_value=fecha_min, max_value=fecha_max
         )
-        anios_presentes = sorted(surebets["fecha"].dt.year.unique(), reverse=True)
+        anios_presentes = sorted(surebets["fecha_ref"].dt.year.unique(), reverse=True)
         anios_sel = st.sidebar.multiselect("Año", options=anios_presentes, default=anios_presentes)
-        meses_presentes = sorted(surebets["fecha"].dt.month.unique())
+        meses_presentes = sorted(surebets["fecha_ref"].dt.month.unique())
         meses_sel = st.sidebar.multiselect(
             "Mes", options=meses_presentes, default=meses_presentes, format_func=lambda m: MESES_ES[m]
         )
@@ -62,9 +60,9 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
         df = df[df["mercado"].isin(mercados_sel)]
         if rango_fechas and len(rango_fechas) == 2:
             inicio, fin = rango_fechas
-            df = df[(df["fecha"].dt.date >= inicio) & (df["fecha"].dt.date <= fin)]
-        df = df[df["fecha"].dt.year.isin(anios_sel)]
-        df = df[df["fecha"].dt.month.isin(meses_sel)]
+            df = df[(df["fecha_ref"].dt.date >= inicio) & (df["fecha_ref"].dt.date <= fin)]
+        df = df[df["fecha_ref"].dt.year.isin(anios_sel)]
+        df = df[df["fecha_ref"].dt.month.isin(meses_sel)]
 
     ids_por_casa = set(patas[patas["casa_apuestas"].isin(casas_sel)]["surebet_id"]) if not patas.empty else set()
     if casas_sel:
@@ -91,15 +89,10 @@ def _kpis(df: pd.DataFrame):
     c5.metric("Resueltas / Pendientes", f"{len(resueltas)} / {len(pendientes)}")
 
 
-def _fecha_calendario(datos: pd.DataFrame) -> pd.Series:
-    """Fecha del evento; las apuestas antiguas sin ella usan la fecha de la apuesta."""
-    return pd.to_datetime(datos["fecha_evento"], format="%Y-%m-%d %H:%M", errors="coerce").fillna(datos["fecha"])
-
-
 def _detalle_dia(apuestas: pd.DataFrame) -> str:
     """HTML con las apuestas cerradas de un día, para el recuadro al pasar el ratón."""
     filas = ""
-    for _, apuesta in apuestas.sort_values("fecha_cal").iterrows():
+    for _, apuesta in apuestas.sort_values("fecha_ref").iterrows():
         color = COLOR_GANANCIA if apuesta["beneficio_real"] >= 0 else COLOR_PERDIDA
         filas += (
             f"<div class='cal-fila'>"
@@ -117,9 +110,8 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
         st.info("Todavía no hay surebets resueltas para mostrar el calendario.")
         return
 
-    resueltas["fecha_cal"] = _fecha_calendario(resueltas)
-    resueltas["periodo"] = resueltas["fecha_cal"].dt.to_period("M")
-    periodos_disponibles = sorted(_fecha_calendario(surebets).dt.to_period("M").unique())
+    resueltas["periodo"] = resueltas["fecha_ref"].dt.to_period("M")
+    periodos_disponibles = sorted(surebets["fecha_ref"].dt.to_period("M").unique())
     if not periodos_disponibles:
         return
 
@@ -158,7 +150,7 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    por_dia = datos_mes.groupby(datos_mes["fecha_cal"].dt.day).agg(
+    por_dia = datos_mes.groupby(datos_mes["fecha_ref"].dt.day).agg(
         beneficio=("beneficio_real", "sum"),
         num=("id", "count"),
     )
@@ -181,7 +173,7 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
                 f"<div class='cal-dia'>{dia}</div>"
                 f"<div class='cal-badge'>{num}</div>"
                 f"<div class='cal-importe'>{beneficio:,.0f} €</div>"
-                f"<div class='cal-detalle{lado}'>{_detalle_dia(datos_mes[datos_mes['fecha_cal'].dt.day == dia])}</div>"
+                f"<div class='cal-detalle{lado}'>{_detalle_dia(datos_mes[datos_mes['fecha_ref'].dt.day == dia])}</div>"
                 f"</div>"
             )
         else:
@@ -298,16 +290,16 @@ def _calendario_apuestas(surebets: pd.DataFrame, df: pd.DataFrame):
 
 
 def _grafico_evolucion(df: pd.DataFrame):
-    resueltas = df[df["estado"] == "resuelta"].sort_values("fecha")
+    resueltas = df[df["estado"] == "resuelta"].sort_values("fecha_ref")
     if resueltas.empty:
         st.info("Todavía no hay surebets resueltas para mostrar la evolución.")
         return
     resueltas = resueltas.copy()
     resueltas["beneficio_acumulado"] = resueltas["beneficio_real"].cumsum()
     fig = px.line(
-        resueltas, x="fecha", y="beneficio_acumulado", markers=True,
+        resueltas, x="fecha_ref", y="beneficio_acumulado", markers=True,
         title="Beneficio acumulado en el tiempo",
-        labels={"fecha": "Fecha", "beneficio_acumulado": "Beneficio acumulado (€)"},
+        labels={"fecha_ref": "Fecha del evento", "beneficio_acumulado": "Beneficio acumulado (€)"},
     )
     fig.update_traces(line_color=COLOR_GANANCIA)
     st.plotly_chart(fig, use_container_width=True)
@@ -319,7 +311,7 @@ def _resumen_mensual(df: pd.DataFrame):
         st.info("Todavía no hay surebets resueltas en el periodo filtrado para el resumen mensual.")
         return
 
-    resueltas["periodo"] = resueltas["fecha"].dt.to_period("M")
+    resueltas["periodo"] = resueltas["fecha_ref"].dt.to_period("M")
     resumen = resueltas.groupby("periodo").agg(
         apostado=("importe_total", "sum"),
         beneficio=("beneficio_real", "sum"),
@@ -353,43 +345,26 @@ def _resumen_mensual(df: pd.DataFrame):
 
 
 def _grafico_por_casa(patas: pd.DataFrame, surebets: pd.DataFrame):
-    resueltas_ids = set(surebets[surebets["estado"] == "resuelta"]["id"])
-    df = patas[
-        patas["surebet_id"].isin(resueltas_ids) & patas["resultado"].isin(["ganada", "perdida", "cerrada"])
-    ].copy()
-    if df.empty:
+    resumen, _ = resumen_por_casa(surebets[surebets["estado"] == "resuelta"], patas)
+    if resumen.empty:
         st.info("Todavía no hay patas resueltas para analizar por casa de apuestas.")
         return
-
-    def _neto(r):
-        if r["resultado"] == "ganada":
-            return r["importe"] * (r["cuota"] - 1)
-        if r["resultado"] == "cerrada":
-            return (r["importe_cierre"] or 0.0) - r["importe"]
-        return -r["importe"]
-
-    df["neto"] = df.apply(_neto, axis=1)
-    resumen = df.groupby("casa_apuestas").agg(
-        beneficio_neto=("neto", "sum"),
-        importe_movido=("importe", "sum"),
-        num_apuestas=("id", "count"),
-    ).reset_index().sort_values("beneficio_neto", ascending=False)
 
     col1, col2 = st.columns(2)
     with col1:
         fig = px.bar(
-            resumen, x="casa_apuestas", y="beneficio_neto", title="Beneficio neto por casa de apuestas",
-            labels={"casa_apuestas": "Casa de apuestas", "beneficio_neto": "Beneficio neto (€)"},
-            color="beneficio_neto", color_continuous_scale=[COLOR_PERDIDA, COLOR_GANANCIA],
+            resumen, x="casa_apuestas", y="beneficio", title="Beneficio neto por casa de apuestas",
+            labels={"casa_apuestas": "Casa de apuestas", "beneficio": "Beneficio neto (€)"},
+            color="beneficio", color_continuous_scale=[COLOR_PERDIDA, COLOR_GANANCIA],
         )
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.dataframe(
-            resumen.rename(columns={
-                "casa_apuestas": "Casa de apuestas",
-                "beneficio_neto": "Beneficio neto (€)",
-                "importe_movido": "Importe movido (€)",
-                "num_apuestas": "Nº apuestas",
+            pd.DataFrame({
+                "Casa de apuestas": resumen["casa_apuestas"],
+                "Beneficio neto (€)": resumen["beneficio"].round(2),
+                "Apostado (€)": resumen["apostado"].round(2),
+                "Nº apuestas": resumen["apuestas"],
             }),
             use_container_width=True, hide_index=True,
         )
@@ -438,4 +413,4 @@ def render():
     _grafico_por_mercado(df)
 
     with st.expander("Ver datos en bruto"):
-        st.dataframe(df.sort_values("fecha", ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(df.sort_values("fecha_ref", ascending=False), use_container_width=True, hide_index=True)

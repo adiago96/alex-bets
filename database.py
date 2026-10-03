@@ -439,4 +439,11 @@ def obtener_todo_dataframe():
     ]
     surebets = pd.DataFrame(filas_surebets, columns=columnas_surebets)
     patas = pd.DataFrame(filas_patas, columns=columnas_patas)
+    # 'fecha_ref' es la fecha con la que se agrupa y filtra en Historial y
+    # Dashboard: la del evento, o la de la apuesta en las antiguas que no la
+    # tienen. Así una apuesta cae en el mismo día y mes en todas las pestañas.
+    surebets["fecha"] = pd.to_datetime(surebets["fecha"])
+    surebets["fecha_ref"] = pd.to_datetime(
+        surebets["fecha_evento"], format="%Y-%m-%d %H:%M", errors="coerce"
+    ).fillna(surebets["fecha"])
     return surebets, patas

@@ -3,6 +3,8 @@
 
 from dataclasses import dataclass
 
+import pandas as pd
+
 
 @dataclass
 class ResultadoSurebet:
@@ -184,3 +186,36 @@ def calcular_resultado_real(
         for importe, cuota, resultado, importe_cierre in patas_importes_cuotas_resultado
     )
     return retorno - importe_total
+
+
+def resumen_por_casa(surebets: pd.DataFrame, patas: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Totales por casa de apuestas, con las mismas reglas que el Bankroll:
+    - en juego: importe de las patas de surebets pendientes (lo que el
+      Bankroll marca como 'en juego');
+    - apostado / devuelto / beneficio: solo patas de surebets resueltas;
+      devuelto es lo que entró en el líquido (calcular_retorno_pata).
+
+    Devuelve (resumen, patas) — `patas` con las columnas de la surebet y el
+    devuelto / beneficio de cada pata, para listar el detalle de cada casa."""
+    patas = patas.merge(
+        surebets[["id", "fecha_ref", "evento", "mercado", "estado"]],
+        left_on="surebet_id", right_on="id", suffixes=("", "_surebet"),
+    )
+    resuelta = patas["estado"] == "resuelta"
+    patas["devuelto"] = [
+        calcular_retorno_pata(f.importe, f.cuota, f.resultado, f.importe_cierre) if r else None
+        for f, r in zip(patas.itertuples(), resuelta)
+    ]
+    patas["beneficio"] = patas["devuelto"] - patas["importe"]
+    patas["apostado"] = patas["importe"].where(resuelta, 0.0)
+    patas["en_juego"] = patas["importe"].where(~resuelta, 0.0)
+
+    resumen = patas.groupby("casa_apuestas").agg(
+        apuestas=("id", "count"),
+        apostado=("apostado", "sum"),
+        devuelto=("devuelto", "sum"),
+        beneficio=("beneficio", "sum"),
+        en_juego=("en_juego", "sum"),
+    ).reset_index().sort_values("beneficio", ascending=False)
+    resumen["roi"] = (resumen["beneficio"] / resumen["apostado"] * 100).where(resumen["apostado"] > 0)
+    return resumen, patas

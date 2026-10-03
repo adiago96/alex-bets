@@ -5,14 +5,11 @@ import pandas as pd
 import streamlit as st
 
 import database as db
-from calculos import calcular_retorno_pata
+from calculos import resumen_por_casa
 
 
 def _cargar_datos():
-    surebets, patas = db.obtener_todo_dataframe()
-    if not surebets.empty:
-        surebets["fecha"] = pd.to_datetime(surebets["fecha"])
-    return surebets, patas
+    return db.obtener_todo_dataframe()
 
 
 TODOS = "Todos"
@@ -25,7 +22,7 @@ def _opciones(serie: pd.Series) -> list:
 def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
     col1, col2, col3, col4 = st.columns(4)
     estado_sel = col1.selectbox(
-        "Estado", options=[TODOS, "pendiente", "resuelta"], index=2, key="hist_estado_sel",
+        "Estado", options=[TODOS, "pendiente", "resuelta"], index=0, key="hist_estado_sel",
         format_func=lambda v: v.capitalize(),
     )
     deporte_sel = col2.selectbox("Deporte", options=_opciones(surebets["deporte"]), key="hist_deporte_sel")
@@ -34,10 +31,10 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
     casa_sel = col4.selectbox("Casa de apuestas", options=casas, key="hist_casa_sel")
 
     if not surebets.empty:
-        fecha_min = surebets["fecha"].min().date()
-        fecha_max = surebets["fecha"].max().date()
+        fecha_min = surebets["fecha_ref"].min().date()
+        fecha_max = surebets["fecha_ref"].max().date()
         rango_fechas = st.date_input(
-            "Rango de fechas",
+            "Rango de fechas (del evento)",
             value=(fecha_min, fecha_max),
             min_value=fecha_min,
             max_value=fecha_max,
@@ -56,20 +53,21 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
             df = df[df["mercado"] == mercado_sel]
         if rango_fechas and len(rango_fechas) == 2:
             inicio, fin = rango_fechas
-            df = df[(df["fecha"].dt.date >= inicio) & (df["fecha"].dt.date <= fin)]
+            df = df[(df["fecha_ref"].dt.date >= inicio) & (df["fecha_ref"].dt.date <= fin)]
 
     if casa_sel != TODOS:
         ids_por_casa = set(patas[patas["casa_apuestas"] == casa_sel]["surebet_id"])
         df = df[df["id"].isin(ids_por_casa)]
 
     patas_filtradas = patas[patas["surebet_id"].isin(df["id"])] if not patas.empty else patas
-    return df.sort_values("fecha", ascending=False), patas_filtradas
+    return df.sort_values("fecha_ref", ascending=False), patas_filtradas, casa_sel
 
 
 def _tabla_resumen(df: pd.DataFrame):
     resumen = pd.DataFrame(
         {
-            "Fecha": df["fecha"].dt.strftime("%Y-%m-%d"),
+            "Fecha evento": df["fecha_ref"].dt.strftime("%Y-%m-%d"),
+            "Fecha apuesta": df["fecha"].dt.strftime("%Y-%m-%d"),
             "Evento": df["evento"],
             "Deporte": df["deporte"],
             "Mercado": df["mercado"],
@@ -95,7 +93,7 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
             beneficio_txt = f"beneficio esperado: {surebet['beneficio_esperado_importe']:.2f} €"
 
         with st.expander(
-            f"{estado_icono} {surebet['fecha'].strftime('%Y-%m-%d')} · {surebet['evento']} · "
+            f"{estado_icono} {surebet['fecha_ref'].strftime('%Y-%m-%d')} · {surebet['evento']} · "
             f"{surebet['deporte']} · {surebet['mercado']} · {beneficio_txt}"
         ):
             tabla_patas = patas_surebet[
@@ -136,41 +134,20 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
                     st.rerun()
 
 
-def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame):
+def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame, casa_sel: str):
     """Totales por casa de apuestas y, debajo, todas las patas jugadas en cada una."""
-    patas = patas.merge(
-        df[["id", "fecha", "evento", "mercado"]], left_on="surebet_id", right_on="id", suffixes=("", "_surebet")
-    )
-    casa_sel = st.session_state.get("hist_casa_sel", TODOS)
     if casa_sel != TODOS:
         patas = patas[patas["casa_apuestas"] == casa_sel]
     if patas.empty:
         st.info("No hay apuestas para mostrar por casa de apuestas.")
         return
+    resumen, patas = resumen_por_casa(df, patas)
 
-    patas["resuelta"] = patas["resultado"] != "pendiente"
-    patas["devuelto"] = [
-        calcular_retorno_pata(f["importe"], f["cuota"], f["resultado"], f["importe_cierre"]) if f["resuelta"] else None
-        for _, f in patas.iterrows()
-    ]
-    patas["beneficio"] = patas["devuelto"] - patas["importe"]
-    patas["apostado_resuelto"] = patas["importe"].where(patas["resuelta"], 0.0)
-    patas["en_juego"] = patas["importe"].where(~patas["resuelta"], 0.0)
-
-    resumen = patas.groupby("casa_apuestas").agg(
-        apuestas=("id", "count"),
-        apostado=("importe", "sum"),
-        devuelto=("devuelto", "sum"),
-        beneficio=("beneficio", "sum"),
-        apostado_resuelto=("apostado_resuelto", "sum"),
-        en_juego=("en_juego", "sum"),
-    ).reset_index().sort_values("beneficio", ascending=False)
-    resumen["roi"] = (resumen["beneficio"] / resumen["apostado_resuelto"] * 100).where(resumen["apostado_resuelto"] > 0)
-
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Importe apostado", f"{resumen['apostado'].sum():,.2f} €")
     c2.metric("Importe devuelto", f"{resumen['devuelto'].sum():,.2f} €")
     c3.metric("Beneficio", f"{resumen['beneficio'].sum():+,.2f} €")
+    c4.metric("En juego", f"{resumen['en_juego'].sum():,.2f} €")
 
     st.dataframe(
         pd.DataFrame(
@@ -188,26 +165,28 @@ def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame):
         hide_index=True,
     )
     st.caption(
-        "Importe devuelto: lo que ha pagado la casa por las apuestas ya resueltas (premio, importe "
-        "anulado o cashout). Beneficio = devuelto − apostado en esas apuestas resueltas. En juego: "
-        "importe de las apuestas todavía pendientes."
+        "Apostado, devuelto y beneficio cuentan las surebets ya resueltas: devuelto es lo que pagó la "
+        "casa (premio, importe anulado o cashout) y beneficio = devuelto − apostado. En juego es lo "
+        "apostado en las surebets pendientes, igual que en el Bankroll."
     )
 
     for _, casa in resumen.iterrows():
-        patas_casa = patas[patas["casa_apuestas"] == casa["casa_apuestas"]].sort_values("fecha", ascending=False)
+        patas_casa = patas[patas["casa_apuestas"] == casa["casa_apuestas"]].sort_values("fecha_ref", ascending=False)
+        en_juego_txt = f" · en juego {casa['en_juego']:,.2f} €" if casa["en_juego"] else ""
         with st.expander(
             f"{casa['casa_apuestas']} · {int(casa['apuestas'])} apuestas · apostado {casa['apostado']:,.2f} € · "
-            f"beneficio {casa['beneficio']:+,.2f} €"
+            f"beneficio {casa['beneficio']:+,.2f} €{en_juego_txt}"
         ):
             st.dataframe(
                 pd.DataFrame(
                     {
-                        "Fecha": patas_casa["fecha"].dt.strftime("%Y-%m-%d"),
+                        "Fecha evento": patas_casa["fecha_ref"].dt.strftime("%Y-%m-%d"),
                         "Evento": patas_casa["evento"],
                         "Mercado": patas_casa["mercado"],
                         "Selección": patas_casa["seleccion"],
                         "Cuota": patas_casa["cuota"],
                         "Importe (€)": patas_casa["importe"].round(2),
+                        "Estado": patas_casa["estado"],
                         "Resultado": patas_casa["resultado"],
                         "Devuelto (€)": patas_casa["devuelto"].round(2),
                         "Beneficio (€)": patas_casa["beneficio"].round(2),
@@ -226,7 +205,7 @@ def render():
         st.info("Todavía no hay surebets registradas. Ve a la pestaña 'Registrar apuesta' para crear la primera.")
         return
 
-    df, patas_filtradas = _aplicar_filtros(surebets, patas)
+    df, patas_filtradas, casa_sel = _aplicar_filtros(surebets, patas)
     if df.empty:
         st.warning("No hay surebets que coincidan con los filtros seleccionados.")
         return
@@ -237,4 +216,4 @@ def render():
         st.markdown("---")
         _detalle_por_surebet(df, patas_filtradas)
     with tab_casas:
-        _resumen_por_casa(df, patas_filtradas)
+        _resumen_por_casa(df, patas_filtradas, casa_sel)
