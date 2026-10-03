@@ -57,6 +57,29 @@ def _editor_fecha_evento(surebet):
             st.rerun()
 
 
+def _editor_casa_pata(pata):
+    """Botón para corregir la casa de una pata mal elegida al registrarla, sin
+    tener que eliminar y volver a crear la surebet. El bankroll se recoloca
+    solo (ver db.cambiar_casa_pata)."""
+    with st.popover("✏️ Cambiar casa"):
+        casas = [c for c in db.listar_nombres_casas() if c != pata["casa_apuestas"]]
+        nueva = st.selectbox(
+            "Nueva casa de apuestas", options=casas + ["Otra..."], key=f"nueva_casa_pata_{pata['id']}"
+        )
+        if nueva == "Otra...":
+            nueva = st.text_input("Nombre de la casa", key=f"nueva_casa_otra_pata_{pata['id']}").strip()
+        st.caption(
+            f"Los {pata['importe']:.2f} € vuelven al líquido de {pata['casa_apuestas']} y pasan a "
+            "'en juego' en la nueva casa."
+        )
+        if st.button("Guardar casa", key=f"guardar_casa_pata_{pata['id']}", use_container_width=True):
+            if not nueva:
+                st.error("Indica el nombre de la casa.")
+            else:
+                db.cambiar_casa_pata(pata["id"], nueva)
+                st.rerun()
+
+
 def render():
     st.subheader("Apuestas pendientes de resolver")
 
@@ -86,7 +109,10 @@ def render():
             opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
             for pata in patas:
                 with st.container(border=True):
-                    st.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}")
+                    c_titulo, c_casa = st.columns([4, 1.3], vertical_alignment="center")
+                    c_titulo.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}")
+                    with c_casa:
+                        _editor_casa_pata(pata)
                     st.caption(f"Cuota {pata['cuota']:.2f} · Importe apostado {pata['importe']:.2f} €")
                     c1, c2 = st.columns(2)
                     resultado_sel = c1.selectbox(

@@ -223,6 +223,29 @@ def actualizar_resultado_pata(pata_id, resultado, importe_cierre=None):
     obtener_todo_dataframe.clear()
 
 
+def cambiar_casa_pata(pata_id, nueva_casa):
+    """Corrige la casa de apuestas de una pata de una surebet pendiente (p.ej.
+    si se eligió mal al registrarla). El importe de la pata vuelve al líquido
+    de la casa anterior y sale de su 'en juego', y en la nueva casa pasa del
+    líquido a 'en juego', igual que si se hubiera registrado bien desde el
+    principio. En una surebet ya resuelta no hace nada."""
+    with get_conn() as cur:
+        cur.execute(
+            """SELECT p.casa_apuestas, p.importe FROM patas p JOIN surebets s ON s.id = p.surebet_id
+               WHERE p.id = %s AND s.estado = 'pendiente' FOR UPDATE OF p""",
+            (pata_id,),
+        )
+        pata = cur.fetchone()
+        if not pata or pata["casa_apuestas"] == nueva_casa:
+            return
+        cur.execute("UPDATE patas SET casa_apuestas = %s WHERE id = %s", (nueva_casa, pata_id))
+        _mover_bankroll(cur, pata["casa_apuestas"], pata["importe"], -pata["importe"])
+        _mover_bankroll(cur, nueva_casa, -pata["importe"], pata["importe"])
+    listar_patas.clear()
+    obtener_todo_dataframe.clear()
+    _limpiar_caches_bankroll()
+
+
 def cerrar_surebet(surebet_id, beneficio_real):
     """Marca como resuelta una surebet cuyas patas ya tienen su resultado y
     lo lleva al bankroll: el importe de cada pata sale de 'en juego' de su
