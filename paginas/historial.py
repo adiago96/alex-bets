@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 import database as db
+from calculos import calcular_retorno_pata
 
 
 def _cargar_datos():
@@ -135,6 +136,88 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
                     st.rerun()
 
 
+def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame):
+    """Totales por casa de apuestas y, debajo, todas las patas jugadas en cada una."""
+    patas = patas.merge(
+        df[["id", "fecha", "evento", "mercado"]], left_on="surebet_id", right_on="id", suffixes=("", "_surebet")
+    )
+    casa_sel = st.session_state.get("hist_casa_sel", TODOS)
+    if casa_sel != TODOS:
+        patas = patas[patas["casa_apuestas"] == casa_sel]
+    if patas.empty:
+        st.info("No hay apuestas para mostrar por casa de apuestas.")
+        return
+
+    patas["resuelta"] = patas["resultado"] != "pendiente"
+    patas["devuelto"] = [
+        calcular_retorno_pata(f["importe"], f["cuota"], f["resultado"], f["importe_cierre"]) if f["resuelta"] else None
+        for _, f in patas.iterrows()
+    ]
+    patas["beneficio"] = patas["devuelto"] - patas["importe"]
+    patas["apostado_resuelto"] = patas["importe"].where(patas["resuelta"], 0.0)
+    patas["en_juego"] = patas["importe"].where(~patas["resuelta"], 0.0)
+
+    resumen = patas.groupby("casa_apuestas").agg(
+        apuestas=("id", "count"),
+        apostado=("importe", "sum"),
+        devuelto=("devuelto", "sum"),
+        beneficio=("beneficio", "sum"),
+        apostado_resuelto=("apostado_resuelto", "sum"),
+        en_juego=("en_juego", "sum"),
+    ).reset_index().sort_values("beneficio", ascending=False)
+    resumen["roi"] = (resumen["beneficio"] / resumen["apostado_resuelto"] * 100).where(resumen["apostado_resuelto"] > 0)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Importe apostado", f"{resumen['apostado'].sum():,.2f} €")
+    c2.metric("Importe devuelto", f"{resumen['devuelto'].sum():,.2f} €")
+    c3.metric("Beneficio", f"{resumen['beneficio'].sum():+,.2f} €")
+
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Casa de apuestas": resumen["casa_apuestas"],
+                "Nº apuestas": resumen["apuestas"],
+                "Importe apostado (€)": resumen["apostado"].round(2),
+                "Importe devuelto (€)": resumen["devuelto"].round(2),
+                "Beneficio (€)": resumen["beneficio"].round(2),
+                "ROI (%)": resumen["roi"].round(2),
+                "En juego (€)": resumen["en_juego"].round(2),
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "Importe devuelto: lo que ha pagado la casa por las apuestas ya resueltas (premio, importe "
+        "anulado o cashout). Beneficio = devuelto − apostado en esas apuestas resueltas. En juego: "
+        "importe de las apuestas todavía pendientes."
+    )
+
+    for _, casa in resumen.iterrows():
+        patas_casa = patas[patas["casa_apuestas"] == casa["casa_apuestas"]].sort_values("fecha", ascending=False)
+        with st.expander(
+            f"{casa['casa_apuestas']} · {int(casa['apuestas'])} apuestas · apostado {casa['apostado']:,.2f} € · "
+            f"beneficio {casa['beneficio']:+,.2f} €"
+        ):
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "Fecha": patas_casa["fecha"].dt.strftime("%Y-%m-%d"),
+                        "Evento": patas_casa["evento"],
+                        "Mercado": patas_casa["mercado"],
+                        "Selección": patas_casa["seleccion"],
+                        "Cuota": patas_casa["cuota"],
+                        "Importe (€)": patas_casa["importe"].round(2),
+                        "Resultado": patas_casa["resultado"],
+                        "Devuelto (€)": patas_casa["devuelto"].round(2),
+                        "Beneficio (€)": patas_casa["beneficio"].round(2),
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 def render():
     st.subheader("Historial de apuestas")
 
@@ -148,6 +231,10 @@ def render():
         st.warning("No hay surebets que coincidan con los filtros seleccionados.")
         return
 
-    _tabla_resumen(df)
-    st.markdown("---")
-    _detalle_por_surebet(df, patas_filtradas)
+    tab_surebets, tab_casas = st.tabs(["Surebets", "Por casa de apuestas"])
+    with tab_surebets:
+        _tabla_resumen(df)
+        st.markdown("---")
+        _detalle_por_surebet(df, patas_filtradas)
+    with tab_casas:
+        _resumen_por_casa(df, patas_filtradas)
