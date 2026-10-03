@@ -180,7 +180,7 @@ def _formulario_nueva_casa(nombres_existentes, nombres_inactivas):
                 if not nombre:
                     st.error("Indica el nombre de la casa de apuestas.")
                 elif nombre in nombres_inactivas:
-                    st.error(f"'{nombre}' ya existe pero está inactiva; reactívala en 'Casas inactivas'.")
+                    st.error(f"'{nombre}' ya existe pero está inactiva; reactívala en 'Desactivadas'.")
                 elif nombre in nombres_existentes:
                     st.error("Ya existe una casa con ese nombre; edítala con el botón ✏️.")
                 else:
@@ -201,7 +201,7 @@ def _desactivar_casa(casas_por_nombre, pendientes_por_casa):
         st.caption(
             "Una casa inactiva no sale para elegirla al registrar apuestas ni movimientos, pero sus "
             "apuestas, depósitos y retiradas se conservan en Historial y Dashboard. Puedes reactivarla "
-            "cuando quieras."
+            "cuando quieras desde su tarjeta, en 'Desactivadas'."
         )
         nombre = st.selectbox("Casa", options=nombres, key="bankroll_casa_a_desactivar")
         casa = casas_por_nombre.get(nombre)
@@ -221,20 +221,32 @@ def _desactivar_casa(casas_por_nombre, pendientes_por_casa):
             st.rerun()
 
 
-def _casas_inactivas(inactivas):
-    if not inactivas:
-        return
-    with st.expander(f"Casas inactivas ({len(inactivas)})"):
-        for casa in inactivas:
-            nombre = casa["casa_apuestas"]
-            col_txt, col_btn = st.columns([4, 1.3], vertical_alignment="center")
-            col_txt.markdown(
-                f"{_logo_html(nombre)}**{nombre}** · Saldo {casa['liquido'] + casa['pendiente']:,.2f} €",
-                unsafe_allow_html=True,
-            )
-            if col_btn.button("↩️ Reactivar", key=f"bankroll_reactivar_{nombre}", use_container_width=True):
-                db.reactivar_casa(nombre)
-                st.rerun()
+def _tarjetas_inactivas(inactivas):
+    """Parrilla aparte, siempre debajo de las activas, con las casas
+    desactivadas en gris: solo se ven sus importes y se pueden reactivar."""
+    st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 🚫 Desactivadas ({len(inactivas)})")
+    st.caption("No salen para elegirlas al registrar apuestas ni movimientos; su historial se conserva.")
+    columnas = st.columns(2)
+    for i, casa in enumerate(inactivas):
+        nombre = casa["casa_apuestas"]
+        with columnas[i % 2]:
+            with st.container(border=True):
+                col_titulo, col_boton = st.columns([3, 1.4], vertical_alignment="center")
+                col_titulo.markdown(
+                    f"<div style='opacity:0.5;filter:grayscale(1);'>{_logo_html(nombre)}<b>{nombre}</b>"
+                    f" <span style='font-size:0.8rem;'>· desactivada</span></div>",
+                    unsafe_allow_html=True,
+                )
+                if col_boton.button("↩️ Reactivar", key=f"bankroll_reactivar_{nombre}", use_container_width=True):
+                    db.reactivar_casa(nombre)
+                    st.rerun()
+                st.markdown(
+                    f"<div style='opacity:0.5;font-size:0.9rem;'>Líquido {casa['liquido']:,.2f} € · "
+                    f"En juego {casa['pendiente']:,.2f} € · "
+                    f"Saldo {casa['liquido'] + casa['pendiente']:,.2f} €</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def render():
@@ -275,6 +287,10 @@ def render():
             with columnas[i % 2]:
                 _tarjeta_casa(casa, totales_movimientos, pendientes_por_casa)
 
+    if inactivas:
+        _tarjetas_inactivas(inactivas)
+
+    if activas or inactivas:
         st.markdown("---")
     nombres_movimientos = sorted(set(nombres_existentes) | {m["casa_apuestas"] for m in movimientos})
     _historial_movimientos(movimientos, nombres_movimientos)
@@ -282,4 +298,3 @@ def render():
     st.markdown("---")
     _formulario_nueva_casa(nombres_existentes, [c["casa_apuestas"] for c in inactivas])
     _desactivar_casa({c["casa_apuestas"]: c for c in casas}, pendientes_por_casa)
-    _casas_inactivas(inactivas)
