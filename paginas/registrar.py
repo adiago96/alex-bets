@@ -294,6 +294,7 @@ def _formulario_nueva_surebet():
             "Fijar el importe de una pata (p.ej. límite de una casa)",
             "Sin sugerencia, importes manuales",
         ],
+        index=3,
     )
 
     # Cuotas, selecciones e importes "frescos": si el usuario acaba de tocar un
