@@ -69,13 +69,4 @@ def pdf_beneficio_por_casa(resumen: pd.DataFrame, desde: date | None, hasta: dat
     ]:
         pdf.cell(70, 7, etiqueta)
         pdf.cell(40, 7, valor, align="R", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
-
-    pdf.set_font("helvetica", "I", 8)
-    pdf.multi_cell(
-        0, 4,
-        "Solo se incluyen apuestas de surebets ya resueltas cuyo evento está dentro del periodo. "
-        "Apostado es el importe jugado en la casa, devuelto lo que pagó la casa (premio, importe "
-        "anulado o cashout) y beneficio = devuelto - apostado. Las apuestas pendientes no se incluyen.",
-    )
     return bytes(pdf.output())
