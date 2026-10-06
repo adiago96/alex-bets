@@ -6,6 +6,7 @@ import streamlit as st
 
 import database as db
 from calculos import resumen_por_casa
+from informes import pdf_beneficio_por_casa
 
 
 def _cargar_datos():
@@ -60,7 +61,9 @@ def _aplicar_filtros(surebets: pd.DataFrame, patas: pd.DataFrame):
         df = df[df["id"].isin(ids_por_casa)]
 
     patas_filtradas = patas[patas["surebet_id"].isin(df["id"])] if not patas.empty else patas
-    return df.sort_values("fecha_ref", ascending=False), patas_filtradas, casa_sel
+    if not (rango_fechas and len(rango_fechas) == 2):
+        rango_fechas = (None, None)
+    return df.sort_values("fecha_ref", ascending=False), patas_filtradas, casa_sel, rango_fechas
 
 
 def _tabla_resumen(df: pd.DataFrame):
@@ -134,13 +137,14 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
                     st.rerun()
 
 
-def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame, casa_sel: str):
+def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame, casa_sel: str, rango_fechas: tuple):
     """Totales por casa de apuestas y, debajo, todas las patas jugadas en cada una."""
     if casa_sel != TODOS:
         patas = patas[patas["casa_apuestas"] == casa_sel]
     if patas.empty:
         st.info("No hay apuestas para mostrar por casa de apuestas.")
         return
+    patas_originales = patas
     resumen, patas = resumen_por_casa(df, patas)
 
     c1, c2, c3, c4 = st.columns(4)
@@ -170,6 +174,8 @@ def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame, casa_sel: str):
         "apostado en las surebets pendientes, igual que en el Bankroll."
     )
 
+    _descarga_pdf(df, patas_originales, rango_fechas)
+
     for _, casa in resumen.iterrows():
         patas_casa = patas[patas["casa_apuestas"] == casa["casa_apuestas"]].sort_values("fecha_ref", ascending=False)
         en_juego_txt = f" · en juego {casa['en_juego']:,.2f} €" if casa["en_juego"] else ""
@@ -197,6 +203,26 @@ def _resumen_por_casa(df: pd.DataFrame, patas: pd.DataFrame, casa_sel: str):
             )
 
 
+def _descarga_pdf(df: pd.DataFrame, patas: pd.DataFrame, rango_fechas: tuple):
+    """Botón para descargar en PDF el beneficio de cada casa (solo surebets resueltas),
+    con los filtros aplicados, para la declaración de la renta."""
+    resueltas = df[df["estado"] == "resuelta"]
+    if resueltas.empty:
+        st.caption("No hay surebets resueltas con estos filtros para generar el informe PDF.")
+        return
+    resumen, _ = resumen_por_casa(resueltas, patas)
+    desde, hasta = rango_fechas
+    nombre = f"beneficio_por_casa_{desde:%Y%m%d}_{hasta:%Y%m%d}.pdf" if desde else "beneficio_por_casa.pdf"
+    st.download_button(
+        "📄 Descargar informe PDF (beneficio por casa)",
+        data=pdf_beneficio_por_casa(resumen, desde, hasta),
+        file_name=nombre,
+        mime="application/pdf",
+        help="Beneficio de cada casa de apuestas en el periodo filtrado, para la declaración de la renta. "
+        "Solo cuenta las surebets resueltas.",
+    )
+
+
 def render():
     st.subheader("Historial de apuestas")
 
@@ -205,7 +231,7 @@ def render():
         st.info("Todavía no hay surebets registradas. Ve a la pestaña 'Registrar apuesta' para crear la primera.")
         return
 
-    df, patas_filtradas, casa_sel = _aplicar_filtros(surebets, patas)
+    df, patas_filtradas, casa_sel, rango_fechas = _aplicar_filtros(surebets, patas)
     if df.empty:
         st.warning("No hay surebets que coincidan con los filtros seleccionados.")
         return
@@ -216,4 +242,4 @@ def render():
         st.markdown("---")
         _detalle_por_surebet(df, patas_filtradas)
     with tab_casas:
-        _resumen_por_casa(df, patas_filtradas, casa_sel)
+        _resumen_por_casa(df, patas_filtradas, casa_sel, rango_fechas)
