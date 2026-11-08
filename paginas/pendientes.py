@@ -22,6 +22,7 @@ ICONOS_DEPORTE = {
     "Hockey hielo": "🏒",
     "Rugby": "🏉",
     "Boxeo/MMA": "🥊",
+    "Dardos": "🎯",
     "Fórmula 1/Motor": "🏎️",
     "Esports": "🎮",
 }
@@ -57,6 +58,47 @@ def _editor_fecha_evento(surebet):
             st.rerun()
 
 
+def _editor_cuota_importe_pata(pata):
+    """Popover para corregir la cuota y/o el importe apostado de una pata
+    pendiente sin tener que eliminar y volver a crear la surebet.
+    El bankroll se ajusta automáticamente (ver db.actualizar_cuota_importe_pata)."""
+    with st.popover("✏️ Editar cuota/importe"):
+        nueva_cuota = st.number_input(
+            "Cuota",
+            min_value=1.01,
+            step=0.01,
+            format="%.2f",
+            value=float(pata["cuota"]),
+            key=f"edit_cuota_{pata['id']}",
+        )
+        nuevo_importe = st.number_input(
+            "Importe apostado (€)",
+            min_value=0.01,
+            step=1.0,
+            format="%.2f",
+            value=float(pata["importe"]),
+            key=f"edit_importe_{pata['id']}",
+        )
+        es_fb = pata.get("es_freebet", False)
+        if es_fb:
+            st.caption("🎁 Pata con freebet: no afecta al líquido ni a lo que está en juego.")
+        else:
+            delta = nuevo_importe - pata["importe"]
+            if delta != 0:
+                signo = "+" if delta > 0 else ""
+                st.caption(
+                    f"El líquido de {pata['casa_apuestas']} cambia {signo}{-delta:.2f} € "
+                    f"y lo que tiene en juego {signo}{delta:.2f} €."
+                )
+        if st.button(
+            "Guardar cuota e importe",
+            key=f"guardar_cuota_importe_{pata['id']}",
+            use_container_width=True,
+        ):
+            db.actualizar_cuota_importe_pata(pata["id"], nueva_cuota, nuevo_importe)
+            st.rerun()
+
+
 def _editor_casa_pata(pata):
     """Botón para corregir la casa de una pata mal elegida al registrarla, sin
     tener que eliminar y volver a crear la surebet. El bankroll se recoloca
@@ -70,10 +112,13 @@ def _editor_casa_pata(pata):
             "Nueva casa de apuestas", options=casas, key=f"nueva_casa_pata_{pata['id']}",
             help="¿No sale la casa? Añádela antes en la pestaña Bankroll.",
         )
-        st.caption(
-            f"Los {pata['importe']:.2f} € vuelven al líquido de {pata['casa_apuestas']} y pasan a "
-            "'en juego' en la nueva casa."
-        )
+        if pata.get("es_freebet", False):
+            st.caption("🎁 Pata con freebet: no mueve importes en el bankroll.")
+        else:
+            st.caption(
+                f"Los {pata['importe']:.2f} € vuelven al líquido de {pata['casa_apuestas']} y pasan a "
+                "'en juego' en la nueva casa."
+            )
         if st.button("Guardar casa", key=f"guardar_casa_pata_{pata['id']}", use_container_width=True):
             db.cambiar_casa_pata(pata["id"], nueva)
             st.rerun()
@@ -107,12 +152,21 @@ def render():
             importes_cierre_seleccionados = {}
             opciones_resultado = ["pendiente", "ganada", "perdida", "anulada", "cerrada"]
             for pata in patas:
+                es_fb = pata.get("es_freebet", False)
                 with st.container(border=True):
-                    c_titulo, c_casa = st.columns([4, 1.3], vertical_alignment="center")
-                    c_titulo.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}")
+                    c_titulo, c_casa, c_edit = st.columns([4, 1.3, 1.3], vertical_alignment="center")
+                    badge_fb = " `🎁 Freebet`" if es_fb else ""
+                    c_titulo.markdown(f"**{pata['casa_apuestas']}** — {pata['seleccion']}{badge_fb}")
                     with c_casa:
                         _editor_casa_pata(pata)
-                    st.caption(f"Cuota {pata['cuota']:.2f} · Importe apostado {pata['importe']:.2f} €")
+                    with c_edit:
+                        _editor_cuota_importe_pata(pata)
+                    texto_importe = (
+                        f"Cuota {pata['cuota']:.2f} · Importe freebet {pata['importe']:.2f} € (0 € del bankroll)"
+                        if es_fb
+                        else f"Cuota {pata['cuota']:.2f} · Importe apostado {pata['importe']:.2f} €"
+                    )
+                    st.caption(texto_importe)
                     c1, c2 = st.columns(2)
                     resultado_sel = c1.selectbox(
                         "Resultado",
@@ -149,6 +203,7 @@ def render():
                                 p["cuota"],
                                 resultados_seleccionados[p["id"]],
                                 importes_cierre_seleccionados[p["id"]],
+                                p.get("es_freebet", False),
                             )
                             for p in patas
                         ]

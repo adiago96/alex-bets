@@ -25,7 +25,7 @@ import database as db
 
 NUEVA_CASA = "+ Añadir nueva casa…"
 TIPOS_MOVIMIENTO = ["Depósito", "Retirada"]
-TIPO_A_ETIQUETA = {"deposito": "Depósito", "retirada": "Retirada"}
+TIPO_A_ETIQUETA = {"deposito": "Depósito", "retirada": "Retirada", "regularizacion": "Regularización"}
 
 # Dominio de cada casa conocida, para pedirle el favicon a Google como logo.
 # Si una casa no está aquí (p.ej. una añadida a mano con otro nombre), se
@@ -155,13 +155,19 @@ def _historial_movimientos(movimientos, nombres_casas):
         for m in filtrados:
             col_txt, col_del = st.columns([6, 1])
             with col_txt:
-                signo = "+" if m["tipo"] == "deposito" else "-"
-                hist_txt = " · histórico (no afectó al líquido)" if m["es_historico"] else ""
-                nota_txt = f" · {m['nota']}" if m["nota"] else ""
-                st.write(
-                    f"{m['fecha']} · {m['casa_apuestas']} · {TIPO_A_ETIQUETA.get(m['tipo'], m['tipo'])} · "
-                    f"{signo}{m['importe']:,.2f} €{hist_txt}{nota_txt}"
-                )
+                if m["tipo"] == "regularizacion":
+                    # La diferencia puede ser positiva o negativa; el signo lo
+                    # da la nota, pero mostramos el icono ⚖️ para distinguirlo
+                    nota_txt = f" · {m['nota']}" if m["nota"] else ""
+                    st.write(f"{m['fecha']} · {m['casa_apuestas']} · ⚖️ Regularización{nota_txt}")
+                else:
+                    signo = "+" if m["tipo"] == "deposito" else "-"
+                    hist_txt = " · histórico (no afectó al líquido)" if m["es_historico"] else ""
+                    nota_txt = f" · {m['nota']}" if m["nota"] else ""
+                    st.write(
+                        f"{m['fecha']} · {m['casa_apuestas']} · {TIPO_A_ETIQUETA.get(m['tipo'], m['tipo'])} · "
+                        f"{signo}{m['importe']:,.2f} €{hist_txt}{nota_txt}"
+                    )
             with col_del:
                 if st.button("🗑️", key=f"del_mov_{m['id']}"):
                     db.eliminar_movimiento_bankroll(m["id"])
@@ -275,6 +281,8 @@ def render():
     if activas:
         totales_movimientos = {}
         for m in movimientos:
+            if m["tipo"] not in ("deposito", "retirada"):
+                continue
             dep, ret = totales_movimientos.get(m["casa_apuestas"], (0.0, 0.0))
             if m["tipo"] == "deposito":
                 dep += m["importe"]

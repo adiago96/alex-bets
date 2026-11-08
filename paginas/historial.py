@@ -99,13 +99,19 @@ def _detalle_por_surebet(df: pd.DataFrame, patas: pd.DataFrame):
             f"{estado_icono} {surebet['fecha_ref'].strftime('%Y-%m-%d')} · {surebet['evento']} · "
             f"{surebet['deporte']} · {surebet['mercado']} · {beneficio_txt}"
         ):
-            tabla_patas = patas_surebet[
-                ["casa_apuestas", "seleccion", "cuota", "importe", "resultado", "importe_cierre"]
-            ].rename(
+            cols_mostrar = ["casa_apuestas", "seleccion", "cuota", "importe"]
+            patas_copia = patas_surebet.copy()
+            if "es_freebet" in patas_copia.columns:
+                patas_copia["tipo"] = patas_copia["es_freebet"].map(lambda fb: "🎁 Freebet" if fb else "Dinero real")
+                cols_mostrar.append("tipo")
+            cols_mostrar.extend(["resultado", "importe_cierre"])
+
+            tabla_patas = patas_copia[cols_mostrar].rename(
                 columns={
                     "casa_apuestas": "Casa de apuestas",
                     "seleccion": "Selección",
                     "cuota": "Cuota",
+                    "tipo": "Tipo",
                     "importe": "Importe (€)",
                     "resultado": "Resultado",
                     "importe_cierre": "Importe de cierre (€)",

@@ -27,6 +27,7 @@ DEPORTES_HABITUALES = [
     "Hockey hielo",
     "Rugby",
     "Boxeo/MMA",
+    "Dardos",
     "Fórmula 1/Motor",
     "Esports",
 ]
@@ -53,6 +54,7 @@ MERCADOS_POR_DEPORTE = {
     "Boxeo/MMA": ["Ganador", "Over/Under", "Irá a decisión"],
     "Fórmula 1/Motor": ["Ganador", "Podio"],
     "Esports": _MERCADOS_DUELO,
+    "Dardos": _MERCADOS_DUELO,
 }
 
 # Todos los mercados conocidos, para cuando el deporte no está en la lista de
@@ -127,8 +129,8 @@ def _normalizar_deporte(texto: str) -> str:
 def _init_state():
     if "patas_temp" not in st.session_state:
         st.session_state.patas_temp = [
-            {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
-            {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
+            {"casa_apuestas": "", "seleccion": "", "cuota": 1.01, "es_freebet": False},
+            {"casa_apuestas": "", "seleccion": "", "cuota": 1.01, "es_freebet": False},
         ]
     st.session_state.setdefault("form_version", 0)
 
@@ -272,7 +274,7 @@ def _formulario_nueva_surebet():
     col_btn1, col_btn2, _ = st.columns([1, 1, 3])
     with col_btn1:
         if st.button("➕ Añadir pata"):
-            st.session_state.patas_temp.append({"casa_apuestas": "", "seleccion": "", "cuota": 1.01})
+            st.session_state.patas_temp.append({"casa_apuestas": "", "seleccion": "", "cuota": 1.01, "es_freebet": False})
     with col_btn2:
         # Se puede bajar a una sola pata: p.ej. si una casa no te deja meter
         # su parte y la apuesta se queda sin cubrir (y luego la cierras).
@@ -360,7 +362,17 @@ def _formulario_nueva_surebet():
 
     for i, pata in enumerate(st.session_state.patas_temp):
         with st.container(border=True):
-            st.caption(f"Pata #{i + 1}")
+            col_pata, col_fb = st.columns([5, 1.5], vertical_alignment="center")
+            with col_pata:
+                st.caption(f"Pata #{i + 1}")
+            with col_fb:
+                pata["es_freebet"] = st.checkbox(
+                    "🎁 Freebet",
+                    value=pata.get("es_freebet", False),
+                    key=_clave(f"freebet_{i}"),
+                    help="La apuesta se realiza con saldo gratuito/freebet: 0 € saldrán de tu bankroll.",
+                )
+
             c1, c2, c3, c4 = st.columns([2, 2, 1, 1.3])
             with c1:
                 pata["casa_apuestas"] = st.selectbox(
@@ -414,25 +426,31 @@ def _formulario_nueva_surebet():
                     f"Cuota #{i + 1}", min_value=1.01, step=0.01, format="%.2f", key=_clave(f"cuota_{i}")
                 )
             with c4:
+                label_importe = f"Importe Freebet (€) #{i + 1}" if pata["es_freebet"] else f"Importe (€) #{i + 1}"
                 pata["importe"] = st.number_input(
-                    f"Importe (€) #{i + 1}", min_value=0.0, step=1.0, format="%.2f", key=_clave(f"importe_{i}")
+                    label_importe, min_value=0.0, step=1.0, format="%.2f", key=_clave(f"importe_{i}")
                 )
-                sugerido_i = suggested_importes[i] if suggested_importes is not None else None
-                if sugerido_i is None and suggested_importes is not None:
-                    st.caption("🔒 Pata de referencia (fijada a mano)")
-                elif sugerido_i is not None and sugerido_i == 0.0 and selecciones.count(selecciones[i]) > 1:
-                    st.caption("💡 Sugerido: 0.00 € (ya cubierto por otra pata con la misma selección)")
-                elif sugerido_i is not None:
-                    st.caption(f"💡 Sugerido: {sugerido_i:.2f} €")
+                if pata["es_freebet"]:
+                    st.caption("✨ 0.00 € del bankroll")
+                else:
+                    sugerido_i = suggested_importes[i] if suggested_importes is not None else None
+                    if sugerido_i is None and suggested_importes is not None:
+                        st.caption("🔒 Pata de referencia (fijada a mano)")
+                    elif sugerido_i is not None and sugerido_i == 0.0 and selecciones.count(selecciones[i]) > 1:
+                        st.caption("💡 Sugerido: 0.00 € (ya cubierto por otra pata con la misma selección)")
+                    elif sugerido_i is not None:
+                        st.caption(f"💡 Sugerido: {sugerido_i:.2f} €")
 
     importes = [p["importe"] for p in st.session_state.patas_temp]
     cuotas_finales = [p["cuota"] for p in st.session_state.patas_temp]
     selecciones_finales = [p["seleccion"] for p in st.session_state.patas_temp]
-    importe_total = sum(importes)
+    es_freebets = [p.get("es_freebet", False) for p in st.session_state.patas_temp]
+    importe_total = sum(imp for imp, fb in zip(importes, es_freebets) if not fb)
+    hay_importes = any(imp > 0 for imp in importes)
 
     confirmar_riesgo = True
-    if importe_total > 0:
-        beneficios = calcular_beneficios_por_seleccion(selecciones_finales, cuotas_finales, importes)
+    if hay_importes:
+        beneficios = calcular_beneficios_por_seleccion(selecciones_finales, cuotas_finales, importes, es_freebets)
         # Si todas las patas van al mismo resultado (o solo hay una), nada
         # cubre el caso de que no salga: el peor caso es perderlo todo.
         sin_cubrir = len({sel or f"__{i}__" for i, sel in enumerate(selecciones_finales)}) == 1
@@ -443,18 +461,26 @@ def _formulario_nueva_surebet():
                 "Casa de apuestas": [p["casa_apuestas"] for p in st.session_state.patas_temp],
                 "Selección": [p["seleccion"] for p in st.session_state.patas_temp],
                 "Cuota": [p["cuota"] for p in st.session_state.patas_temp],
+                "Tipo": ["🎁 Freebet" if fb else "Dinero real" for fb in es_freebets],
                 "Importe a apostar (€)": [round(x, 2) for x in importes],
                 "Si gana esta pata, beneficio (€)": [round(b, 2) for b in beneficios],
             }
         )
         st.dataframe(tabla, use_container_width=True, hide_index=True)
-        st.caption(f"Importe total: {importe_total:.2f} €")
+        txt_total = f"Inversión de tu bankroll: **{importe_total:.2f} €**"
+        if any(es_freebets):
+            suma_fb = sum(imp for imp, fb in zip(importes, es_freebets) if fb)
+            txt_total += f" · Freebets (regalo): **{suma_fb:.2f} €**"
+        st.caption(txt_total)
 
         if peor_beneficio > 0:
+            roi_txt = f" ({peor_beneficio / importe_total * 100:.2f}%)" if importe_total > 0 else " (100% freebet, 0 € de tu bankroll)"
             st.success(
                 f"✅ Surebet válida en el peor de los casos. Beneficio garantizado mínimo: "
-                f"**{peor_beneficio:.2f} €** ({peor_beneficio / importe_total * 100:.2f}%)"
+                f"**{peor_beneficio:.2f} €**{roi_txt}"
             )
+        elif peor_beneficio == 0:
+            st.info("ℹ️ Beneficio garantizado mínimo: **0.00 €** (apuesta sin riesgo cubierta con freebet).")
         else:
             confirmar_riesgo = False
             if sin_cubrir:
@@ -476,13 +502,15 @@ def _formulario_nueva_surebet():
         peor_beneficio = 0.0
         st.info("Escribe el importe a apostar en cada pata para ver el resultado esperado.")
 
-    if st.button("💾 Guardar surebet", type="primary", disabled=not confirmar_riesgo or importe_total <= 0):
+    todos_importes_ok = all(p["importe"] > 0 for p in st.session_state.patas_temp)
+    if st.button("💾 Guardar surebet", type="primary", disabled=not confirmar_riesgo or not todos_importes_ok):
         patas_guardar = [
             {
                 "casa_apuestas": p["casa_apuestas"].strip(),
                 "seleccion": p["seleccion"],
                 "cuota": p["cuota"],
                 "importe": p["importe"],
+                "es_freebet": p.get("es_freebet", False),
             }
             for p in st.session_state.patas_temp
         ]
@@ -507,16 +535,15 @@ def _formulario_nueva_surebet():
                 notas=notas,
                 patas=patas_guardar,
             )
-            # El importe de cada pata ha pasado de líquido a 'en juego': si
-            # alguna casa se ha quedado en negativo, se ofrece registrar el
-            # depósito nada más volver a dibujar la página.
-            faltantes = _casas_en_negativo({p["casa_apuestas"] for p in patas_guardar})
+            # Solo verificar casas en negativo para patas que usan dinero real
+            casas_reales = {p["casa_apuestas"] for p in patas_guardar if not p.get("es_freebet", False)}
+            faltantes = _casas_en_negativo(casas_reales)
             if faltantes:
                 st.session_state["depositos_pendientes"] = faltantes
             st.session_state.form_version += 1
             st.session_state.patas_temp = [
-                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
-                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01},
+                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01, "es_freebet": False},
+                {"casa_apuestas": "", "seleccion": "", "cuota": 1.01, "es_freebet": False},
             ]
             st.session_state.pop("_deporte_anterior", None)
             st.session_state.pop("_mercado_anterior", None)

@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS surebets (
 ALTER TABLE surebets ADD COLUMN IF NOT EXISTS fecha_evento TEXT;
 ALTER TABLE surebets ADD COLUMN IF NOT EXISTS resolucion_en_bankroll BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Columna para freebets: si ya existe no hace nada
+ALTER TABLE patas ADD COLUMN IF NOT EXISTS es_freebet BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS patas (
     id SERIAL PRIMARY KEY,
     surebet_id INTEGER NOT NULL REFERENCES surebets(id) ON DELETE CASCADE,
@@ -48,7 +51,8 @@ CREATE TABLE IF NOT EXISTS patas (
     cuota DOUBLE PRECISION NOT NULL,
     importe DOUBLE PRECISION NOT NULL,
     resultado TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | ganada | perdida | anulada | cerrada
-    importe_cierre DOUBLE PRECISION  -- solo si resultado = 'cerrada': importe recibido al cerrar/cashout
+    importe_cierre DOUBLE PRECISION,  -- solo si resultado = 'cerrada': importe recibido al cerrar/cashout
+    es_freebet BOOLEAN NOT NULL DEFAULT FALSE  -- TRUE: el stake es una freebet (no sale del bankroll; al ganar solo se cobra el beneficio neto, no el stake)
 );
 
 CREATE INDEX IF NOT EXISTS idx_patas_surebet ON patas(surebet_id);
@@ -159,9 +163,10 @@ def crear_surebet(
 ):
     """Crea una surebet junto con sus patas. `fecha_evento` es la fecha y hora
     del partido ('YYYY-MM-DD HH:MM'). `patas` es una lista de dicts con claves:
-    casa_apuestas, seleccion, cuota, importe. El importe de cada pata pasa del
-    líquido de su casa a 'en juego' (el líquido puede quedar en negativo si
-    falta hacer un depósito)."""
+    casa_apuestas, seleccion, cuota, importe, es_freebet. El importe de cada
+    pata normal pasa del líquido de su casa a 'en juego' (el líquido puede
+    quedar en negativo si falta hacer un depósito). Las patas freebet no
+    mueven el bankroll al registrarse."""
     with get_conn() as cur:
         cur.execute(
             """INSERT INTO surebets
@@ -175,12 +180,13 @@ def crear_surebet(
         )
         surebet_id = cur.fetchone()["id"]
         cur.executemany(
-            """INSERT INTO patas (surebet_id, casa_apuestas, seleccion, cuota, importe)
-               VALUES (%s, %s, %s, %s, %s)""",
-            [(surebet_id, p["casa_apuestas"], p["seleccion"], p["cuota"], p["importe"]) for p in patas],
+            """INSERT INTO patas (surebet_id, casa_apuestas, seleccion, cuota, importe, es_freebet)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            [(surebet_id, p["casa_apuestas"], p["seleccion"], p["cuota"], p["importe"], p.get("es_freebet", False)) for p in patas],
         )
         for p in patas:
-            _mover_bankroll(cur, p["casa_apuestas"], -p["importe"], p["importe"])
+            if not p.get("es_freebet", False):
+                _mover_bankroll(cur, p["casa_apuestas"], -p["importe"], p["importe"])
     listar_surebets_pendientes.clear()
     obtener_todo_dataframe.clear()
     _limpiar_caches_bankroll()
@@ -226,15 +232,91 @@ def actualizar_resultado_pata(pata_id, resultado, importe_cierre=None):
     obtener_todo_dataframe.clear()
 
 
+def actualizar_cuota_importe_pata(pata_id, nueva_cuota, nuevo_importe):
+    """Corrige la cuota y/o el importe apostado de una pata de una surebet
+    pendiente.
+
+    El bankroll se ajusta en la misma transacción:
+    - el importe antiguo sale de 'en juego' y vuelve al líquido de su casa,
+    - el nuevo importe pasa del líquido a 'en juego'.
+
+    Los campos de la propia surebet (importe_total, beneficio_esperado_pct,
+    beneficio_esperado_importe) se recalculan a partir de la suma de patas
+    actualizada. No hace nada si la surebet ya está resuelta.
+    """
+    with get_conn() as cur:
+        # Obtener datos actuales de la pata y la surebet (sólo si pendiente)
+        cur.execute(
+            """SELECT p.casa_apuestas, p.cuota, p.importe, p.surebet_id, p.es_freebet
+               FROM patas p
+               JOIN surebets s ON s.id = p.surebet_id
+               WHERE p.id = %s AND s.estado = 'pendiente'
+               FOR UPDATE OF p""",
+            (pata_id,),
+        )
+        pata = cur.fetchone()
+        if not pata:
+            return
+
+        importe_viejo = pata["importe"]
+        casa = pata["casa_apuestas"]
+        surebet_id = pata["surebet_id"]
+        es_freebet = pata.get("es_freebet", False)
+
+        # Actualizar cuota e importe en la pata
+        cur.execute(
+            "UPDATE patas SET cuota = %s, importe = %s WHERE id = %s",
+            (nueva_cuota, nuevo_importe, pata_id),
+        )
+
+        # Ajustar bankroll de esa casa si no es freebet
+        if not es_freebet:
+            delta = nuevo_importe - importe_viejo
+            _mover_bankroll(cur, casa, -delta, delta)
+
+        # Recalcular los totales de la surebet con todos los importes vigentes
+        cur.execute(
+            "SELECT cuota, importe, es_freebet FROM patas WHERE surebet_id = %s",
+            (surebet_id,),
+        )
+        patas_actualizadas = cur.fetchall()
+        nuevo_importe_total = sum(p["importe"] for p in patas_actualizadas if not p.get("es_freebet", False))
+        retornos = [
+            (p["importe"] * (p["cuota"] - 1.0) if p.get("es_freebet", False) else p["importe"] * p["cuota"])
+            for p in patas_actualizadas
+        ]
+        retorno_min = min(retornos) if retornos else 0.0
+        nuevo_beneficio_importe = retorno_min - nuevo_importe_total
+        nuevo_beneficio_pct = (
+            (nuevo_beneficio_importe / nuevo_importe_total * 100.0)
+            if nuevo_importe_total > 0
+            else 0.0
+        )
+
+        cur.execute(
+            """UPDATE surebets
+               SET importe_total = %s,
+                   beneficio_esperado_importe = %s,
+                   beneficio_esperado_pct = %s
+               WHERE id = %s""",
+            (nuevo_importe_total, nuevo_beneficio_importe, nuevo_beneficio_pct, surebet_id),
+        )
+
+    listar_patas.clear()
+    listar_surebets_pendientes.clear()
+    obtener_todo_dataframe.clear()
+    _limpiar_caches_bankroll()
+
+
 def cambiar_casa_pata(pata_id, nueva_casa):
     """Corrige la casa de apuestas de una pata de una surebet pendiente (p.ej.
     si se eligió mal al registrarla). El importe de la pata vuelve al líquido
     de la casa anterior y sale de su 'en juego', y en la nueva casa pasa del
     líquido a 'en juego', igual que si se hubiera registrado bien desde el
-    principio. En una surebet ya resuelta no hace nada."""
+    principio. En patas freebet no se toca el bankroll. En una surebet ya resuelta no hace nada."""
     with get_conn() as cur:
         cur.execute(
-            """SELECT p.casa_apuestas, p.importe FROM patas p JOIN surebets s ON s.id = p.surebet_id
+            """SELECT p.casa_apuestas, p.importe, p.es_freebet FROM patas p JOIN surebets s ON s.id = p.surebet_id
                WHERE p.id = %s AND s.estado = 'pendiente' FOR UPDATE OF p""",
             (pata_id,),
         )
@@ -242,8 +324,9 @@ def cambiar_casa_pata(pata_id, nueva_casa):
         if not pata or pata["casa_apuestas"] == nueva_casa:
             return
         cur.execute("UPDATE patas SET casa_apuestas = %s WHERE id = %s", (nueva_casa, pata_id))
-        _mover_bankroll(cur, pata["casa_apuestas"], pata["importe"], -pata["importe"])
-        _mover_bankroll(cur, nueva_casa, -pata["importe"], pata["importe"])
+        if not pata.get("es_freebet", False):
+            _mover_bankroll(cur, pata["casa_apuestas"], pata["importe"], -pata["importe"])
+            _mover_bankroll(cur, nueva_casa, -pata["importe"], pata["importe"])
     listar_patas.clear()
     obtener_todo_dataframe.clear()
     _limpiar_caches_bankroll()
@@ -251,10 +334,11 @@ def cambiar_casa_pata(pata_id, nueva_casa):
 
 def cerrar_surebet(surebet_id, beneficio_real):
     """Marca como resuelta una surebet cuyas patas ya tienen su resultado y
-    lo lleva al bankroll: el importe de cada pata sale de 'en juego' de su
+    lo lleva al bankroll: el importe de cada pata normal sale de 'en juego' de su
     casa y entra en el líquido lo que devuelve la casa (ver
-    calcular_retorno_pata). Si ya estaba resuelta (p.ej. doble clic), no
-    hace nada, para no mover el bankroll dos veces."""
+    calcular_retorno_pata). Las patas freebet no tenían importe en juego, así
+    que solo se suma al líquido el beneficio neto que corresponda.
+    Si ya estaba resuelta (p.ej. doble clic), no hace nada."""
     with get_conn() as cur:
         cur.execute(
             """UPDATE surebets SET estado = 'resuelta', beneficio_real = %s, resolucion_en_bankroll = TRUE
@@ -264,8 +348,12 @@ def cerrar_surebet(surebet_id, beneficio_real):
         if cur.fetchone():
             cur.execute("SELECT * FROM patas WHERE surebet_id = %s", (surebet_id,))
             for p in cur.fetchall():
-                retorno = calcular_retorno_pata(p["importe"], p["cuota"], p["resultado"], p["importe_cierre"])
-                _mover_bankroll(cur, p["casa_apuestas"], retorno, -p["importe"])
+                es_freebet = p.get("es_freebet", False)
+                retorno = calcular_retorno_pata(p["importe"], p["cuota"], p["resultado"], p["importe_cierre"], es_freebet)
+                # Patas normales: sale del 'en juego' y entra el retorno al líquido
+                # Patas freebet: no había 'en juego', solo se suma el retorno al líquido
+                delta_pendiente = 0 if es_freebet else -p["importe"]
+                _mover_bankroll(cur, p["casa_apuestas"], retorno, delta_pendiente)
     listar_surebets_pendientes.clear()
     obtener_todo_dataframe.clear()
     _limpiar_caches_bankroll()
@@ -274,10 +362,10 @@ def cerrar_surebet(surebet_id, beneficio_real):
 def reabrir_surebet(surebet_id):
     """Deshace el cierre de una surebet resuelta por error: la vuelve a
     'pendiente' y pone el resultado de todas sus patas otra vez en
-    'pendiente', para poder corregirlo desde 'Registrar apuesta'. Si al
-    resolverla se movió el bankroll, lo deshace (sale del líquido lo que
-    había entrado y el importe vuelve a 'en juego'); las resueltas antes de
-    sincronizar el bankroll no lo tocan."""
+    'pendiente'. Si al resolverla se movió el bankroll, lo deshace:
+    - patas normales: sale del líquido lo que había entrado y el importe vuelve a 'en juego'.
+    - patas freebet: solo se quita del líquido el retorno que se había ingresado (no hay 'en juego').
+    Las resueltas antes de sincronizar el bankroll no lo tocan."""
     with get_conn() as cur:
         cur.execute(
             "SELECT estado, resolucion_en_bankroll FROM surebets WHERE id = %s FOR UPDATE", (surebet_id,)
@@ -288,8 +376,10 @@ def reabrir_surebet(surebet_id):
         if surebet["resolucion_en_bankroll"]:
             cur.execute("SELECT * FROM patas WHERE surebet_id = %s", (surebet_id,))
             for p in cur.fetchall():
-                retorno = calcular_retorno_pata(p["importe"], p["cuota"], p["resultado"], p["importe_cierre"])
-                _mover_bankroll(cur, p["casa_apuestas"], -retorno, p["importe"])
+                es_freebet = p.get("es_freebet", False)
+                retorno = calcular_retorno_pata(p["importe"], p["cuota"], p["resultado"], p["importe_cierre"], es_freebet)
+                delta_pendiente = 0 if es_freebet else p["importe"]
+                _mover_bankroll(cur, p["casa_apuestas"], -retorno, delta_pendiente)
         cur.execute(
             """UPDATE surebets SET estado = 'pendiente', beneficio_real = NULL, resolucion_en_bankroll = FALSE
                WHERE id = %s""",
@@ -308,15 +398,16 @@ def reabrir_surebet(surebet_id):
 def eliminar_surebet(surebet_id):
     """Borra una surebet. Si estaba pendiente, el importe de cada pata sale
     de 'en juego' y vuelve al líquido de su casa (se entiende que la apuesta
-    no llegó a hacerse). Una ya resuelta no toca el bankroll: ese dinero ya
-    se movió de verdad."""
+    no llegó a hacerse). Las patas freebet no tocan el bankroll.
+    Una ya resuelta no toca el bankroll: ese dinero ya se movió de verdad."""
     with get_conn() as cur:
         cur.execute("SELECT estado FROM surebets WHERE id = %s FOR UPDATE", (surebet_id,))
         surebet = cur.fetchone()
         if surebet and surebet["estado"] == "pendiente":
-            cur.execute("SELECT casa_apuestas, importe FROM patas WHERE surebet_id = %s", (surebet_id,))
+            cur.execute("SELECT casa_apuestas, importe, es_freebet FROM patas WHERE surebet_id = %s", (surebet_id,))
             for p in cur.fetchall():
-                _mover_bankroll(cur, p["casa_apuestas"], p["importe"], -p["importe"])
+                if not p.get("es_freebet", False):
+                    _mover_bankroll(cur, p["casa_apuestas"], p["importe"], -p["importe"])
         cur.execute("DELETE FROM surebets WHERE id = %s", (surebet_id,))
     listar_surebets_pendientes.clear()
     listar_patas.clear()
@@ -328,8 +419,18 @@ def guardar_bankroll(casa_apuestas, liquido, pendiente):
     """Fija directamente el líquido y el importe en juego de una casa de
     apuestas (crea la casa si no existía). Registrar, resolver, reabrir o
     eliminar apuestas ya los mueven solos; esto sirve para cuadrarlos a mano
-    con lo que diga la casa de verdad."""
+    con lo que diga la casa de verdad.
+
+    Si la casa ya existía y el líquido ha cambiado, registra automáticamente
+    un movimiento de tipo 'regularizacion' en movimientos_bankroll para dejar
+    constancia del desajuste. El campo nota indica el valor anterior y el nuevo.
+    """
     with get_conn() as cur:
+        # Leer el líquido actual antes de sobreescribir
+        cur.execute("SELECT liquido FROM bankroll_casas WHERE casa_apuestas = %s", (casa_apuestas,))
+        fila = cur.fetchone()
+        liquido_anterior = fila["liquido"] if fila else None
+
         cur.execute(
             """INSERT INTO bankroll_casas (casa_apuestas, liquido, pendiente, actualizado_en)
                VALUES (%s, %s, %s, %s)
@@ -338,8 +439,22 @@ def guardar_bankroll(casa_apuestas, liquido, pendiente):
                    actualizado_en = EXCLUDED.actualizado_en""",
             (casa_apuestas, liquido, pendiente, _ahora()),
         )
+
+        # Registrar regularización solo si el líquido ha cambiado en una casa que ya existía
+        if liquido_anterior is not None:
+            diferencia = liquido - liquido_anterior
+            if abs(diferencia) > 0.001:
+                nota = f"Ajuste manual: líquido {liquido_anterior:.2f} € → {liquido:.2f} €"
+                cur.execute(
+                    """INSERT INTO movimientos_bankroll
+                       (casa_apuestas, tipo, importe, fecha, nota, es_historico, creado_en)
+                       VALUES (%s, 'regularizacion', %s, %s, %s, FALSE, %s)""",
+                    (casa_apuestas, abs(diferencia), _ahora()[:10], nota, _ahora()),
+                )
+
     listar_bankroll.clear()
     listar_nombres_casas.clear()
+    listar_movimientos_bankroll.clear()
 
 
 @st.cache_data(ttl=15)
@@ -389,12 +504,12 @@ def _ajustar_liquido(casa_apuestas, delta):
 @st.cache_data(ttl=15)
 def importes_pendientes_por_casa():
     """Suma del importe apostado en las surebets pendientes, por casa: es lo
-    que debería marcar 'en juego' en el bankroll si está cuadrado."""
+    que debería marcar 'en juego' en el bankroll si está cuadrado (las patas freebet se excluyen)."""
     with get_conn() as cur:
         cur.execute(
             """SELECT p.casa_apuestas, SUM(p.importe) AS importe
                FROM patas p JOIN surebets s ON s.id = p.surebet_id
-               WHERE s.estado = 'pendiente'
+               WHERE s.estado = 'pendiente' AND NOT COALESCE(p.es_freebet, FALSE)
                GROUP BY p.casa_apuestas"""
         )
         return {f["casa_apuestas"]: f["importe"] for f in cur.fetchall()}
@@ -484,7 +599,7 @@ def obtener_todo_dataframe():
     ]
     columnas_patas = [
         "id", "surebet_id", "casa_apuestas", "seleccion", "cuota", "importe",
-        "resultado", "importe_cierre",
+        "resultado", "importe_cierre", "es_freebet",
     ]
     surebets = pd.DataFrame(filas_surebets, columns=columnas_surebets)
     patas = pd.DataFrame(filas_patas, columns=columnas_patas)

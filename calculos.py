@@ -142,25 +142,43 @@ def calcular_reparto_desde_grupo_fijo(
 
 
 def calcular_beneficios_por_seleccion(
-    selecciones: list[str], cuotas: list[float], importes: list[float]
+    selecciones: list[str], cuotas: list[float], importes: list[float], es_freebets: list[bool] | None = None
 ) -> list[float]:
     """Beneficio si gana cada pata, agrupando antes las patas que comparten
     selección: si dos patas apuestan al mismo resultado (repartido entre dos
     casas), ganan o pierden juntas, así que su beneficio debe sumar ambos
-    retornos, no calcularse como si fueran resultados independientes."""
+    retornos, no calcularse como si fueran resultados independientes.
+    Las patas con freebet no restan stake del bankroll y al ganar solo suman
+    el beneficio neto: importe * (cuota - 1)."""
     claves = _claves_de_grupo(selecciones)
-    importe_total = sum(importes)
+    if es_freebets is None:
+        es_freebets = [False] * len(importes)
+    importe_total_real = sum(imp for imp, fb in zip(importes, es_freebets) if not fb)
     retorno_por_clave: dict[str, float] = {}
-    for clave, cuota, importe in zip(claves, cuotas, importes):
-        retorno_por_clave[clave] = retorno_por_clave.get(clave, 0.0) + importe * cuota
-    return [retorno_por_clave[clave] - importe_total for clave in claves]
+    for clave, cuota, importe, fb in zip(claves, cuotas, importes, es_freebets):
+        retorno_pata = importe * (cuota - 1.0) if fb else importe * cuota
+        retorno_por_clave[clave] = retorno_por_clave.get(clave, 0.0) + retorno_pata
+    return [retorno_por_clave[clave] - importe_total_real for clave in claves]
 
 
-def calcular_retorno_pata(importe: float, cuota: float, resultado: str, importe_cierre: float | None) -> float:
+def calcular_retorno_pata(importe: float, cuota: float, resultado: str, importe_cierre: float | None, es_freebet: bool = False) -> float:
     """Dinero que devuelve la casa por una pata ya resuelta (lo que entra en
     el líquido): ganada -> importe * cuota (lo apostado más el beneficio),
     anulada -> el importe apostado, cerrada (cashout) -> el importe de cierre,
-    perdida -> nada."""
+    perdida -> nada.
+
+    Si es_freebet=True el stake no es dinero real, así que:
+    - ganada -> solo el beneficio neto: importe * (cuota - 1)
+    - anulada -> 0 (la freebet se pierde, no se devuelve el stake)
+    - cerrada -> el importe_cierre tal cual (la casa ya lo calcula sin stake)
+    - perdida -> nada
+    """
+    if es_freebet:
+        if resultado == "ganada":
+            return importe * (cuota - 1.0)
+        if resultado == "cerrada":
+            return importe_cierre or 0.0
+        return 0.0
     if resultado == "ganada":
         return importe * cuota
     if resultado == "anulada":
@@ -171,19 +189,22 @@ def calcular_retorno_pata(importe: float, cuota: float, resultado: str, importe_
 
 
 def calcular_resultado_real(
-    patas_importes_cuotas_resultado: list[tuple[float, float, str, float | None]], importe_total: float
+    patas_importes_cuotas_resultado: list[tuple[float, float, str, float | None, bool]], importe_total: float
 ) -> float:
     """Calcula el beneficio real una vez resueltas todas las patas.
 
-    patas_importes_cuotas_resultado: lista de tuplas (importe, cuota, resultado, importe_cierre)
+    patas_importes_cuotas_resultado: lista de tuplas
+    (importe, cuota, resultado, importe_cierre, es_freebet)
     donde resultado es 'ganada', 'perdida', 'anulada' o 'cerrada'. Una pata
     anulada devuelve el importe apostado (no se gana ni se pierde esa parte
     del stake). Una pata cerrada (cashout) devuelve exactamente el
     importe_cierre indicado, en vez de importe * cuota.
+    Las patas freebet no aportan stake al importe_total (ya se descontaron al
+    registrar): al ganar solo añaden el beneficio neto (importe × (cuota-1)).
     """
     retorno = sum(
-        calcular_retorno_pata(importe, cuota, resultado, importe_cierre)
-        for importe, cuota, resultado, importe_cierre in patas_importes_cuotas_resultado
+        calcular_retorno_pata(importe, cuota, resultado, importe_cierre, es_freebet)
+        for importe, cuota, resultado, importe_cierre, es_freebet in patas_importes_cuotas_resultado
     )
     return retorno - importe_total
 
@@ -202,13 +223,15 @@ def resumen_por_casa(surebets: pd.DataFrame, patas: pd.DataFrame) -> tuple[pd.Da
         left_on="surebet_id", right_on="id", suffixes=("", "_surebet"),
     )
     resuelta = patas["estado"] == "resuelta"
+    es_fb = patas["es_freebet"].fillna(False).astype(bool) if "es_freebet" in patas.columns else pd.Series(False, index=patas.index)
     patas["devuelto"] = [
-        calcular_retorno_pata(f.importe, f.cuota, f.resultado, f.importe_cierre) if r else None
+        calcular_retorno_pata(f.importe, f.cuota, f.resultado, f.importe_cierre, es_freebet=getattr(f, "es_freebet", False) or False) if r else None
         for f, r in zip(patas.itertuples(), resuelta)
     ]
-    patas["beneficio"] = patas["devuelto"] - patas["importe"]
-    patas["apostado"] = patas["importe"].where(resuelta, 0.0)
-    patas["en_juego"] = patas["importe"].where(~resuelta, 0.0)
+    importe_real = patas["importe"].where(~es_fb, 0.0)
+    patas["beneficio"] = patas["devuelto"] - importe_real
+    patas["apostado"] = importe_real.where(resuelta, 0.0)
+    patas["en_juego"] = importe_real.where(~resuelta, 0.0)
 
     resumen = patas.groupby("casa_apuestas").agg(
         apuestas=("id", "count"),
